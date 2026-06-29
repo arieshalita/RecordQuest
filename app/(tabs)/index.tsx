@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   SafeAreaView,
   StatusBar,
@@ -89,6 +89,7 @@ type RecordListScreenProps = {
   onFound?: (record: RecordItem) => void;
   onRemove?: (record: RecordItem) => void;
   onViewRecord: (record: RecordItem) => void;
+  isWishlist?: boolean;
 };
 
 function calculateAchievementCategories(
@@ -159,6 +160,149 @@ function calculateAchievementCategories(
       ],
     },
   ];
+}
+
+type CollectionAnalytics = {
+  totalArtists: number;
+  totalGenres: number;
+  averageYear: number;
+  oldestAlbum: RecordItem | null;
+  newestAlbum: RecordItem | null;
+  mostCollectedArtist: { artist: string; count: number } | null;
+  favoriteGenre: { genre: string; count: number } | null;
+  albumsWithStore: number;
+  albumsWithStory: number;
+  averageRating: number;
+  storesVisited: number;
+  totalCheckIns: number;
+  favoriteStore: { id: string; name: string; count: number } | null;
+  wishlistCount: number;
+  wishlistCompletionPercent: number;
+  mostRecentAlbum: RecordItem | null;
+};
+
+function calculateCollectionAnalytics(
+  records: RecordItem[],
+  wishlist: RecordItem[],
+  storeCheckIns: Record<string, number>,
+  activity: string[]
+): CollectionAnalytics {
+  // Unique artists and genres
+  const uniqueArtists = new Set(records.map((r) => r.artist));
+  const uniqueGenres = new Set(records.map((r) => r.genre));
+
+  // Year statistics
+  const yearsWithoutUnknown = records
+    .map((r) => parseInt(r.year, 10))
+    .filter((y) => !isNaN(y) && y > 0);
+  const averageYear = yearsWithoutUnknown.length > 0
+    ? Math.round(yearsWithoutUnknown.reduce((a, b) => a + b, 0) / yearsWithoutUnknown.length)
+    : 0;
+
+  const oldestAlbum = yearsWithoutUnknown.length > 0
+    ? records.reduce((oldest, current) => {
+        const currentYear = parseInt(current.year, 10);
+        const oldestYear = parseInt(oldest.year, 10);
+        if (isNaN(currentYear) || currentYear <= 0) return oldest;
+        if (isNaN(oldestYear) || oldestYear <= 0) return current;
+        return currentYear < oldestYear ? current : oldest;
+      })
+    : null;
+
+  const newestAlbum = yearsWithoutUnknown.length > 0
+    ? records.reduce((newest, current) => {
+        const currentYear = parseInt(current.year, 10);
+        const newestYear = parseInt(newest.year, 10);
+        if (isNaN(currentYear) || currentYear <= 0) return newest;
+        if (isNaN(newestYear) || newestYear <= 0) return current;
+        return currentYear > newestYear ? current : newest;
+      })
+    : null;
+
+  // Artist frequency
+  const artistCounts = records.reduce(
+    (acc, record) => {
+      acc[record.artist] = (acc[record.artist] ?? 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>
+  );
+  const mostCollectedArtist: { artist: string; count: number } | null = Object.entries(artistCounts).length > 0
+    ? Object.entries(artistCounts).reduce<{ artist: string; count: number }>(
+        (max, [artist, count]) => (count > max.count ? { artist, count } : max),
+        { artist: "", count: 0 }
+      )
+    : null;
+
+  // Genre frequency
+  const genreCounts = records.reduce(
+    (acc, record) => {
+      acc[record.genre] = (acc[record.genre] ?? 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>
+  );
+  const favoriteGenre: { genre: string; count: number } | null = Object.entries(genreCounts).length > 0
+    ? Object.entries(genreCounts).reduce<{ genre: string; count: number }>(
+        (max, [genre, count]) => (count > max.count ? { genre, count } : max),
+        { genre: "", count: 0 }
+      )
+    : null;
+
+  // Store information
+  const albumsWithStore = records.filter((r) => r.purchasedAt?.trim()).length;
+  const albumsWithStory = records.filter((r) => r.notes?.trim()).length;
+
+  // Ratings
+  const ratingsCount = records.filter((r) => typeof r.rating === "number" && r.rating > 0).length;
+  const averageRating = ratingsCount > 0
+    ? Math.round(
+        (records.reduce((sum, r) => sum + (typeof r.rating === "number" && r.rating > 0 ? r.rating : 0), 0) /
+          ratingsCount) *
+          10
+      ) / 10
+    : 0;
+
+  // Store check-ins
+  const storesVisited = Object.keys(storeCheckIns).length;
+  const totalCheckIns = Object.values(storeCheckIns).reduce((sum, count) => sum + count, 0);
+  const favoriteStore: { id: string; name: string; count: number } | null = storesVisited > 0
+    ? Object.entries(storeCheckIns).reduce<{ id: string; name: string; count: number } | null>(
+        (max, [storeId, count]) => {
+          const maxCount = max?.count ?? 0;
+          return count > maxCount ? { id: storeId, name: storeId, count } : max;
+        },
+        null
+      )
+    : null;
+
+  // Wishlist completion
+  const wishlistCompletionCount = activity.filter((entry) => entry.startsWith("Found ")).length;
+  const wishlistCompletionPercent = wishlist.length > 0
+    ? Math.round((wishlistCompletionCount / (wishlist.length + wishlistCompletionCount)) * 100)
+    : 0;
+
+  // Most recent album (from records, assuming array order)
+  const mostRecentAlbum = records.length > 0 ? records[0] : null;
+
+  return {
+    totalArtists: uniqueArtists.size,
+    totalGenres: uniqueGenres.size,
+    averageYear,
+    oldestAlbum,
+    newestAlbum,
+    mostCollectedArtist,
+    favoriteGenre,
+    albumsWithStore,
+    albumsWithStory,
+    averageRating,
+    storesVisited,
+    totalCheckIns,
+    favoriteStore,
+    wishlistCount: wishlist.length,
+    wishlistCompletionPercent,
+    mostRecentAlbum,
+  };
 }
 
 const recordStores: StoreItem[] = [
@@ -377,6 +521,7 @@ function ProfileSection({
   unlockedBadgeCount,
   achievementCategories,
   activity,
+  storeCheckIns,
   onBack,
 }: {
   records: RecordItem[];
@@ -384,8 +529,11 @@ function ProfileSection({
   unlockedBadgeCount: number;
   achievementCategories: AchievementCategory[];
   activity: string[];
+  storeCheckIns: Record<string, number>;
   onBack: () => void;
 }) {
+  const analytics = calculateCollectionAnalytics(records, wishlist, storeCheckIns, activity);
+
   return (
     <ScrollView contentContainerStyle={styles.page}>
       <TopBar title="Profile" back={onBack} />
@@ -406,6 +554,8 @@ function ProfileSection({
         <StatCard value={wishlist.length} label="Wishlist" />
         <StatCard value={unlockedBadgeCount} label="Badges" />
       </View>
+
+      <CollectionAnalyticsDashboard analytics={analytics} />
 
       <Text style={styles.sectionTitle}>Achievements</Text>
       {achievementCategories.map((category) => (
@@ -517,6 +667,113 @@ function StoresSection({
   );
 }
 
+function ConfirmPurchaseDetailsModal({
+  visible,
+  record,
+  purchasedAtDetail,
+  setPurchasedAtDetail,
+  purchasePrice,
+  setPurchasePrice,
+  purchaseDate,
+  setPurchaseDate,
+  purchaseCondition,
+  setPurchaseCondition,
+  onConfirm,
+  onCancel,
+}: {
+  visible: boolean;
+  record: RecordItem | null;
+  purchasedAtDetail: string;
+  setPurchasedAtDetail: (value: string) => void;
+  purchasePrice: string;
+  setPurchasePrice: (value: string) => void;
+  purchaseDate: string;
+  setPurchaseDate: (value: string) => void;
+  purchaseCondition: string;
+  setPurchaseCondition: (value: string) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (!visible || !record) return null;
+
+  return (
+    <View style={styles.modalOverlay}>
+      <View style={styles.modalContent}>
+        <Text style={styles.modalTitle}>Purchase Details for "{record.album}"</Text>
+        <Text style={styles.modalSubtitle}>Complete the details or skip to add with defaults.</Text>
+
+        <View style={styles.formSection}>
+          <Text style={styles.fieldLabel}>Store / Location (optional)</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Where did you find it?"
+            placeholderTextColor="#8B8B96"
+            value={purchasedAtDetail}
+            onChangeText={setPurchasedAtDetail}
+          />
+        </View>
+
+        <View style={styles.formSection}>
+          <Text style={styles.fieldLabel}>Price (optional)</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="$ Price paid"
+            placeholderTextColor="#8B8B96"
+            value={purchasePrice}
+            onChangeText={setPurchasePrice}
+            keyboardType="decimal-pad"
+          />
+        </View>
+
+        <View style={styles.formSection}>
+          <Text style={styles.fieldLabel}>Purchase Date (optional)</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="YYYY-MM-DD or any format"
+            placeholderTextColor="#8B8B96"
+            value={purchaseDate}
+            onChangeText={setPurchaseDate}
+          />
+        </View>
+
+        <View style={styles.formSection}>
+          <Text style={styles.fieldLabel}>Condition</Text>
+          <View style={styles.conditionPicker}>
+            {["Mint", "Near Mint", "Very Good", "Good", "Fair", "Poor"].map((condition) => (
+              <Pressable
+                key={condition}
+                style={[
+                  styles.conditionButton,
+                  purchaseCondition === condition && styles.conditionButtonActive,
+                ]}
+                onPress={() => setPurchaseCondition(condition)}
+              >
+                <Text
+                  style={[
+                    styles.conditionButtonText,
+                    purchaseCondition === condition && styles.conditionButtonTextActive,
+                  ]}
+                >
+                  {condition}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.modalButtons}>
+          <Pressable style={[styles.modalButton, styles.modalButtonSecondary]} onPress={onCancel}>
+            <Text style={styles.modalButtonTextSecondary}>Skip</Text>
+          </Pressable>
+          <Pressable style={[styles.modalButton, styles.modalButtonPrimary]} onPress={onConfirm}>
+            <Text style={styles.modalButtonTextPrimary}>Add to Collection</Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 export default function HomeScreen() {
   const [screen, setScreen] = useState("Home");
   const [records, setRecords] = useState<RecordItem[]>(starterRecords);
@@ -539,6 +796,12 @@ export default function HomeScreen() {
   const [recordDraft, setRecordDraft] = useState<Partial<RecordItem>>({});
   const [storeCheckIns, setStoreCheckIns] = useState<Record<string, number>>({});
   const [loaded, setLoaded] = useState(false);
+  const [showPurchaseModal, setShowPurchaseModal] = useState(false);
+  const [recordBeingPromoted, setRecordBeingPromoted] = useState<RecordItem | null>(null);
+  const [purchasePrice, setPurchasePrice] = useState("");
+  const [purchaseDate, setPurchaseDate] = useState("");
+  const [purchaseCondition, setPurchaseCondition] = useState("Good");
+  const [purchasedAtDetail, setPurchasedAtDetail] = useState("");
 
   const achievementCategories = calculateAchievementCategories(records, wishlist, storeCheckIns, activity);
   const unlockedBadgeCount = achievementCategories
@@ -649,7 +912,7 @@ export default function HomeScreen() {
     }
   }
 
-  function handleAlbumChange(value: string) {
+  function handleAlbumInputChange(value: string) {
     setAlbum(value);
     setSelectedMetadata(null);
     setSearchResults([]);
@@ -664,9 +927,35 @@ export default function HomeScreen() {
   }
 
   function markFound(item: RecordItem) {
-    setWishlist(wishlist.filter((w) => w.id !== item.id));
-    setRecords([item, ...records]);
-    setActivity([`Found ${item.album}`, ...activity]);
+    setRecordBeingPromoted(item);
+    setPurchasedAtDetail("");
+    setPurchasePrice("");
+    setPurchaseDate("");
+    setPurchaseCondition("Good");
+    setShowPurchaseModal(true);
+  }
+
+  function completePurchaseAndMoveToCollection() {
+    if (!recordBeingPromoted) return;
+
+    const updatedRecord = {
+      ...recordBeingPromoted,
+      purchasedAt: purchasedAtDetail || recordBeingPromoted.purchasedAt || undefined,
+      price: purchasePrice || recordBeingPromoted.price || "",
+      purchaseDate: purchaseDate || recordBeingPromoted.purchaseDate || "",
+      condition: purchaseCondition || recordBeingPromoted.condition || "Good",
+    };
+
+    setWishlist(wishlist.filter((w) => w.id !== recordBeingPromoted.id));
+    setRecords([updatedRecord, ...records]);
+    setActivity([`Found ${updatedRecord.album}`, ...activity]);
+
+    setShowPurchaseModal(false);
+    setRecordBeingPromoted(null);
+    setPurchasedAtDetail("");
+    setPurchasePrice("");
+    setPurchaseDate("");
+    setPurchaseCondition("Good");
   }
 
   function openDirections(address: string) {
@@ -807,7 +1096,7 @@ export default function HomeScreen() {
           selectedMetadata={selectedMetadata}
           isSearching={isSearching}
           searchMessage={searchMessage}
-          onAlbumChange={handleAlbumChange}
+          onAlbumChange={handleAlbumInputChange}
           onArtistChange={handleArtistChange}
           onSearch={searchAlbum}
           onSelectResult={(result) => {
@@ -837,7 +1126,7 @@ export default function HomeScreen() {
           selectedMetadata={selectedMetadata}
           isSearching={isSearching}
           searchMessage={searchMessage}
-          onAlbumChange={handleAlbumChange}
+          onAlbumChange={handleAlbumInputChange}
           onArtistChange={handleArtistChange}
           onSearch={searchAlbum}
           onSelectResult={(result) => {
@@ -848,10 +1137,10 @@ export default function HomeScreen() {
             setSearchMessage(`Selected ${result.album}.`);
           }}
           onAdd={() => addRecord(true)}
-          onRemove={removeWishlist}
+          onFound={markFound}
           onViewRecord={(record: RecordItem) => openRecordDetail(record, "Wishlist")}
           back={() => setScreen("Home")}
-          onFound={markFound}
+          isWishlist={true}
         />
       )}
 
@@ -888,6 +1177,7 @@ export default function HomeScreen() {
           unlockedBadgeCount={unlockedBadgeCount}
           achievementCategories={achievementCategories}
           activity={activity}
+          storeCheckIns={storeCheckIns}
           onBack={() => setScreen("Home")}
         />
       )}
@@ -940,6 +1230,28 @@ export default function HomeScreen() {
         <NavItem label="Wishlist" active={screen === "Wishlist"} onPress={() => setScreen("Wishlist")} />
         <NavItem label="Profile" active={screen === "Profile"} onPress={() => setScreen("Profile")} />
       </View>
+
+      <ConfirmPurchaseDetailsModal
+        visible={showPurchaseModal}
+        record={recordBeingPromoted}
+        purchasedAtDetail={purchasedAtDetail}
+        setPurchasedAtDetail={setPurchasedAtDetail}
+        purchasePrice={purchasePrice}
+        setPurchasePrice={setPurchasePrice}
+        purchaseDate={purchaseDate}
+        setPurchaseDate={setPurchaseDate}
+        purchaseCondition={purchaseCondition}
+        setPurchaseCondition={setPurchaseCondition}
+        onConfirm={completePurchaseAndMoveToCollection}
+        onCancel={() => {
+          setShowPurchaseModal(false);
+          setRecordBeingPromoted(null);
+          setPurchasedAtDetail("");
+          setPurchasePrice("");
+          setPurchaseDate("");
+          setPurchaseCondition("Good");
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -965,6 +1277,7 @@ function RecordListScreen({
   onFound,
   onRemove,
   onViewRecord,
+  isWishlist = false,
 }: RecordListScreenProps) {
   return (
     <ScrollView contentContainerStyle={styles.page}>
@@ -991,13 +1304,15 @@ function RecordListScreen({
           value={artist}
           onChangeText={onArtistChange}
         />
-        <TextInput
-          style={styles.input}
-          placeholder="Purchased at (optional)"
-          placeholderTextColor="#8B8B96"
-          value={purchasedAt}
-          onChangeText={setPurchasedAt}
-        />
+        {!isWishlist && (
+          <TextInput
+            style={styles.input}
+            placeholder="Purchased at (optional)"
+            placeholderTextColor="#8B8B96"
+            value={purchasedAt}
+            onChangeText={setPurchasedAt}
+          />
+        )}
         {isSearching && (
           <View style={styles.searchStatusRow}>
             <ActivityIndicator color="#A78BFA" />
@@ -1056,7 +1371,9 @@ function RecordListScreen({
                 <View style={{ flex: 1 }}>
                   <Text style={styles.albumTitle}>{record.album}</Text>
                   <Text style={styles.artistName}>{record.artist}</Text>
-                  <Text style={styles.purchaseText}>{record.purchasedAt || "Purchased at unknown"}</Text>
+                  {!isWishlist && record.purchasedAt && (
+                    <Text style={styles.purchaseText}>Purchased at {record.purchasedAt}</Text>
+                  )}
                   <View style={styles.metaRow}>
                     <Text style={styles.genrePill}>{record.genre}</Text>
                     <Text style={styles.yearText}>{record.year}</Text>
@@ -1118,6 +1435,93 @@ function StatCard({ value, label }: { value: number; label: string }) {
   );
 }
 
+function AnalyticsCard({ value, label, icon = "📊" }: { value: string | number; label: string; icon?: string }) {
+  // Auto-scale font size based on value length for long strings
+  const valueStr = String(value);
+  const valueFontSize = valueStr.length > 12 ? 11 : valueStr.length > 8 ? 13 : 14;
+  
+  return (
+    <View style={styles.analyticsCard}>
+      <Text style={styles.analyticsCardIcon}>{icon}</Text>
+      <Text style={[styles.analyticsCardValue, { fontSize: valueFontSize }]} numberOfLines={1}>
+        {value}
+      </Text>
+      <Text style={styles.analyticsCardLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function AnalyticsSectionHeader({ title, icon = "📈" }: { title: string; icon?: string }) {
+  return (
+    <View style={styles.analyticsSectionHeader}>
+      <Text style={styles.analyticsSectionIcon}>{icon}</Text>
+      <Text style={styles.analyticsSectionTitle}>{title}</Text>
+    </View>
+  );
+}
+
+function CollectionAnalyticsDashboard({ analytics }: { analytics: CollectionAnalytics }) {
+  return (
+    <View>
+      <Text style={styles.sectionTitle}>Collection Analytics</Text>
+
+      {/* Collection Stats */}
+      <AnalyticsSectionHeader title="Collection Overview" icon="💿" />
+      <View style={styles.analyticsGrid}>
+        <AnalyticsCard value={analytics.totalArtists} label="Artists" icon="🎤" />
+        <AnalyticsCard value={analytics.totalGenres} label="Genres" icon="🎵" />
+        <AnalyticsCard value={analytics.averageYear || "—"} label="Avg Year" icon="📅" />
+        <AnalyticsCard
+          value={analytics.oldestAlbum?.year || "—"}
+          label="Oldest"
+          icon="🏛️"
+        />
+      </View>
+
+      {/* Collection Habits */}
+      <AnalyticsSectionHeader title="Habits & Metadata" icon="📝" />
+      <View style={styles.analyticsGrid}>
+        <AnalyticsCard
+          value={analytics.mostCollectedArtist?.artist || "—"}
+          label={`Top Artist (${analytics.mostCollectedArtist?.count || 0})`}
+          icon="⭐"
+        />
+        <AnalyticsCard
+          value={analytics.favoriteGenre?.genre || "—"}
+          label={`Favorite (${analytics.favoriteGenre?.count || 0})`}
+          icon="🎶"
+        />
+        <AnalyticsCard value={analytics.albumsWithStory} label="With Stories" icon="📖" />
+        <AnalyticsCard value={analytics.albumsWithStore} label="With Stores" icon="🏪" />
+      </View>
+
+      {/* Stores & Check-ins */}
+      <AnalyticsSectionHeader title="Store Explorer" icon="🗺️" />
+      <View style={styles.analyticsGrid}>
+        <AnalyticsCard value={analytics.storesVisited} label="Stores Visited" icon="📍" />
+        <AnalyticsCard value={analytics.totalCheckIns} label="Total Check-ins" icon="✓" />
+        <AnalyticsCard
+          value={analytics.favoriteStore?.name || "—"}
+          label={`Favorite (${analytics.favoriteStore?.count || 0})`}
+          icon="💫"
+        />
+        <AnalyticsCard value={analytics.averageRating} label="Avg Rating" icon="⭐" />
+      </View>
+
+      {/* Wishlist */}
+      <AnalyticsSectionHeader title="Wishlist Progress" icon="✨" />
+      <View style={styles.analyticsGrid}>
+        <AnalyticsCard value={analytics.wishlistCount} label="Wishlist Items" icon="💜" />
+        <AnalyticsCard
+          value={`${analytics.wishlistCompletionPercent}%`}
+          label="Completion"
+          icon="🎯"
+        />
+      </View>
+    </View>
+  );
+}
+
 function Badge({ emoji, label }: { emoji: string; label: string }) {
   return (
     <View style={styles.badgeCard}>
@@ -1159,7 +1563,7 @@ const styles = StyleSheet.create({
   },
   page: {
     padding: 26,
-    paddingBottom: 120,
+    paddingBottom: 130,
   },
   logo: {
     color: "#FFF4D6",
@@ -1217,18 +1621,18 @@ const styles = StyleSheet.create({
     color: "#d6c2a1",
     fontSize: 17,
     lineHeight: 28,
-    maxWidth: "94%",
+    maxWidth: "96%",
   },
   statsRow: {
     flexDirection: "row",
     gap: 14,
-    marginBottom: 24,
+    marginBottom: 28,
   },
   statCard: {
     flex: 1,
     backgroundColor: "rgba(20, 18, 40, 0.98)",
     borderRadius: 24,
-    padding: 24,
+    padding: 20,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.22)",
     shadowColor: "#000",
@@ -1240,18 +1644,20 @@ const styles = StyleSheet.create({
     color: "#F59E0B",
     fontSize: 32,
     fontWeight: "900",
+    lineHeight: 38,
   },
   statLabel: {
     color: "#C7C7D1",
-    fontSize: 13,
-    marginTop: 5,
+    fontSize: 12,
+    fontWeight: "600",
+    marginTop: 8,
   },
   sectionTitle: {
     color: "#FFF4D6",
     fontSize: 22,
     fontWeight: "900",
-    marginBottom: 12,
-    marginTop: 10,
+    marginBottom: 14,
+    marginTop: 12,
   },
   homeCard: {
     backgroundColor: "rgba(24, 23, 46, 0.96)",
@@ -1272,12 +1678,14 @@ const styles = StyleSheet.create({
     color: "#fff4d6",
     fontSize: 18,
     fontWeight: "900",
+    maxWidth: "80%",
   },
   homeCardSubtitle: {
     color: "#c8b6d5",
     fontSize: 13,
     marginTop: 6,
-    maxWidth: "78%",
+    maxWidth: "80%",
+    lineHeight: 18,
   },
   homeArrow: {
     color: "#d6c0ff",
@@ -1448,11 +1856,13 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 15,
     fontWeight: "800",
+    maxWidth: "82%",
   },
   resultArtist: {
     color: "#C7C7D1",
     fontSize: 13,
-    marginTop: 3,
+    marginTop: 4,
+    maxWidth: "82%",
   },
   recordCard: {
     backgroundColor: "rgba(22, 22, 34, 0.98)",
@@ -1469,13 +1879,13 @@ const styles = StyleSheet.create({
   cardInfo: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 16,
+    gap: 18,
   },
   cover: {
     width: 140,
     height: 140,
     borderRadius: 24,
-    marginRight: 18,
+    marginRight: 20,
     backgroundColor: "#312f50",
   },
   albumTitle: {
@@ -1483,22 +1893,26 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "900",
     lineHeight: 26,
+    maxWidth: "88%",
   },
   purchaseText: {
     color: "#b8af9e",
     fontSize: 13,
-    marginTop: 6,
+    marginTop: 8,
+    maxWidth: "88%",
   },
   artistName: {
     color: "#c5b094",
     fontSize: 14,
     marginTop: 6,
+    maxWidth: "88%",
   },
   metaRow: {
     flexDirection: "row",
-    gap: 10,
+    gap: 12,
     alignItems: "center",
     marginTop: 12,
+    marginBottom: 4,
   },
   genrePill: {
     color: "#FFFFFF",
@@ -1553,13 +1967,13 @@ const styles = StyleSheet.create({
   profileCard: {
     backgroundColor: "#11111A",
     borderRadius: 28,
-    padding: 20,
+    padding: 24,
     borderWidth: 1,
     borderColor: "#272738",
     flexDirection: "row",
-    gap: 16,
-    alignItems: "center",
-    marginBottom: 18,
+    gap: 18,
+    alignItems: "flex-start",
+    marginBottom: 22,
   },
   storeCard: {
     backgroundColor: "rgba(18, 16, 38, 0.98)",
@@ -1662,12 +2076,13 @@ const styles = StyleSheet.create({
     color: "#ffffff",
   },
   avatar: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: 76,
+    height: 76,
+    borderRadius: 38,
     backgroundColor: "#7C3AED",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   avatarText: {
     color: "#FFFFFF",
@@ -1676,18 +2091,22 @@ const styles = StyleSheet.create({
   },
   profileName: {
     color: "#FFFFFF",
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: "900",
+    marginBottom: 4,
   },
   profileSub: {
     color: "#C7C7D1",
-    fontSize: 15,
-    marginTop: 3,
+    fontSize: 14,
+    marginBottom: 4,
+    fontWeight: "500",
   },
   profileBio: {
-    color: "#A7A7B3",
-    fontSize: 13,
-    marginTop: 4,
+    color: "#a7a1bd",
+    fontSize: 12,
+    marginTop: 2,
+    lineHeight: 18,
+    maxWidth: "92%",
   },
   badgeGrid: {
     flexDirection: "row",
@@ -1695,13 +2114,15 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   achievementCategory: {
-    marginBottom: 18,
+    marginBottom: 22,
   },
   achievementCategoryTitle: {
     color: "#d6c2a1",
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "800",
-    marginBottom: 10,
+    marginBottom: 12,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
   },
   achievementGrid: {
     flexDirection: "row",
@@ -1750,9 +2171,10 @@ const styles = StyleSheet.create({
     color: "#8F8A9D",
   },
   badgeRequirement: {
-    marginTop: 8,
-    fontSize: 12,
-    lineHeight: 18,
+    marginTop: 6,
+    fontSize: 11,
+    lineHeight: 16,
+    textAlign: "center",
   },
   badgeRequirementUnlocked: {
     color: "#C7C7D1",
@@ -1761,8 +2183,8 @@ const styles = StyleSheet.create({
     color: "#7A7587",
   },
   badgeProgress: {
-    marginTop: 8,
-    fontSize: 12,
+    marginTop: 6,
+    fontSize: 11,
     fontWeight: "900",
   },
   badgeProgressUnlocked: {
@@ -1772,11 +2194,11 @@ const styles = StyleSheet.create({
     color: "#8F8A9D",
   },
   badgeStatus: {
-    marginTop: 8,
-    fontSize: 11,
+    marginTop: 6,
+    fontSize: 10,
     fontWeight: "900",
     textTransform: "uppercase",
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
   },
   badgeStatusUnlocked: {
     color: "#A78BFA",
@@ -1784,17 +2206,72 @@ const styles = StyleSheet.create({
   badgeStatusLocked: {
     color: "#57516C",
   },
+  analyticsCard: {
+    backgroundColor: "rgba(18, 16, 38, 0.96)",
+    borderRadius: 24,
+    padding: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.20)",
+    flex: 1,
+    minHeight: 150,
+    paddingVertical: 20,
+  },
+  analyticsCardIcon: {
+    fontSize: 26,
+    marginBottom: 10,
+  },
+  analyticsCardValue: {
+    color: "#fff4d6",
+    fontSize: 14,
+    fontWeight: "900",
+    marginBottom: 6,
+    textAlign: "center",
+    maxWidth: "95%",
+  },
+  analyticsCardLabel: {
+    color: "#a7a1bd",
+    fontSize: 10,
+    textAlign: "center",
+    lineHeight: 14,
+    fontWeight: "600",
+    marginTop: 2,
+  },
+  analyticsGrid: {
+    flexDirection: "row",
+    gap: 13,
+    marginBottom: 24,
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+  },
+  analyticsSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+    marginTop: 20,
+  },
+  analyticsSectionIcon: {
+    fontSize: 19,
+    marginRight: 8,
+  },
+  analyticsSectionTitle: {
+    color: "#d6c2a1",
+    fontSize: 14,
+    fontWeight: "800",
+  },
   activityCard: {
     backgroundColor: "#11111A",
     borderRadius: 18,
-    padding: 15,
-    marginBottom: 10,
+    padding: 16,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: "#272738",
   },
   activityText: {
     color: "#C7C7D1",
-    fontSize: 15,
+    fontSize: 14,
+    lineHeight: 20,
   },
   emptyFeatureCard: {
     backgroundColor: "#15151E",
@@ -1817,7 +2294,7 @@ const styles = StyleSheet.create({
   detailCard: {
     backgroundColor: "rgba(18, 16, 38, 0.96)",
     borderRadius: 30,
-    padding: 24,
+    padding: 26,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.18)",
     shadowColor: "#000",
@@ -1836,12 +2313,14 @@ const styles = StyleSheet.create({
     color: "#fff4d6",
     fontSize: 28,
     fontWeight: "900",
-    marginBottom: 6,
+    marginBottom: 8,
+    maxWidth: "98%",
   },
   detailArtist: {
     color: "#c8b294",
     fontSize: 15,
-    marginBottom: 18,
+    marginBottom: 20,
+    maxWidth: "98%",
   },
   detailInfoRow: {
     flexDirection: "row",
@@ -1860,13 +2339,13 @@ const styles = StyleSheet.create({
     textAlign: "right",
   },
   notesSection: {
-    marginTop: 18,
+    marginTop: 22,
   },
   notesHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 12,
   },
   notesTitle: {
     color: "#fff4d6",
@@ -1885,7 +2364,7 @@ const styles = StyleSheet.create({
   editButtonText: {
     color: "#d4c0ff",
     fontWeight: "700",
-    fontSize: 14,
+    fontSize: 13,
   },
   notesInput: {
     backgroundColor: "rgba(29, 26, 47, 0.96)",
@@ -1898,15 +2377,16 @@ const styles = StyleSheet.create({
     borderColor: "rgba(124, 58, 237, 0.22)",
   },
   notesText: {
-    color: "#c8b294",
+    color: "#d6c2a1",
     fontSize: 14,
-    lineHeight: 22,
+    lineHeight: 24,
+    fontWeight: "400",
   },
   journalCard: {
     backgroundColor: "rgba(24, 22, 45, 0.96)",
     borderRadius: 24,
-    padding: 18,
-    marginTop: 18,
+    padding: 20,
+    marginTop: 20,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.22)",
   },
@@ -1914,17 +2394,18 @@ const styles = StyleSheet.create({
     color: "#fff4d6",
     fontSize: 16,
     fontWeight: "900",
-    marginBottom: 18,
+    marginBottom: 20,
   },
   journalField: {
-    marginBottom: 18,
+    marginBottom: 20,
   },
   journalLabel: {
-    color: "#A7A7B3",
-    fontSize: 12,
-    fontWeight: "700",
-    marginBottom: 8,
-    letterSpacing: 0.4,
+    color: "#8a8498",
+    fontSize: 11,
+    fontWeight: "600",
+    marginBottom: 6,
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
   },
   journalInput: {
     backgroundColor: "rgba(29, 26, 47, 0.96)",
@@ -1935,24 +2416,25 @@ const styles = StyleSheet.create({
     borderColor: "rgba(124, 58, 237, 0.24)",
   },
   journalValue: {
-    color: "#d3c9b1",
-    fontSize: 14,
-    lineHeight: 22,
+    color: "#f3e7ce",
+    fontSize: 15,
+    lineHeight: 24,
+    fontWeight: "500",
   },
   columnRow: {
     flexDirection: "row",
-    gap: 12,
-    marginBottom: 16,
+    gap: 14,
+    marginBottom: 18,
   },
   journalHalfField: {
     flex: 1,
   },
   ratingRow: {
-    marginTop: 14,
+    marginTop: 16,
   },
   starsRow: {
     flexDirection: "row",
-    gap: 10,
+    gap: 12,
     marginTop: 12,
   },
   starButton: {
@@ -1971,22 +2453,23 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     gap: 12,
-    marginTop: 18,
+    marginTop: 22,
   },
   journalStoryInput: {
-    minHeight: 140,
+    minHeight: 150,
     textAlignVertical: "top",
     borderRadius: 24,
-    padding: 16,
+    padding: 18,
     color: "#f3e7ce",
     backgroundColor: "rgba(29, 26, 47, 0.96)",
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.24)",
   },
   journalStoryText: {
-    color: "#e7d7ff",
+    color: "#f0e5d8",
     fontSize: 15,
     lineHeight: 26,
+    fontWeight: "400",
   },
   saveButton: {
     backgroundColor: "#7c3aed",
@@ -2068,5 +2551,103 @@ const styles = StyleSheet.create({
   },
   navItemActive: {
     backgroundColor: "rgba(124, 58, 237, 0.2)",
+  },
+  modalOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 1000,
+  },
+  modalContent: {
+    backgroundColor: "rgba(18, 16, 38, 0.98)",
+    borderRadius: 24,
+    padding: 24,
+    width: "88%",
+    maxHeight: "80%",
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.24)",
+  },
+  modalTitle: {
+    color: "#fff4d6",
+    fontSize: 18,
+    fontWeight: "900",
+    marginBottom: 8,
+  },
+  modalSubtitle: {
+    color: "#a7a1bd",
+    fontSize: 14,
+    marginBottom: 20,
+  },
+  formSection: {
+    marginBottom: 16,
+  },
+  fieldLabel: {
+    color: "#C7C7D1",
+    fontSize: 12,
+    fontWeight: "600",
+    marginBottom: 8,
+  },
+  conditionPicker: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  conditionButton: {
+    flex: 1,
+    minWidth: "30%",
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.20)",
+    backgroundColor: "rgba(124, 58, 237, 0.08)",
+    alignItems: "center",
+  },
+  conditionButtonActive: {
+    backgroundColor: "rgba(124, 58, 237, 0.40)",
+    borderColor: "rgba(124, 58, 237, 0.60)",
+  },
+  conditionButtonText: {
+    color: "#a7a1bd",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  conditionButtonTextActive: {
+    color: "#fff4d6",
+  },
+  modalButtons: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 24,
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalButtonPrimary: {
+    backgroundColor: "rgba(124, 58, 237, 0.80)",
+  },
+  modalButtonSecondary: {
+    backgroundColor: "rgba(124, 58, 237, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.30)",
+  },
+  modalButtonTextPrimary: {
+    color: "#fff4d6",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  modalButtonTextSecondary: {
+    color: "#a7a1bd",
+    fontSize: 14,
+    fontWeight: "800",
   },
 });
