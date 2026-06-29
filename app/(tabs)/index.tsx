@@ -570,11 +570,18 @@ function ProfileSection({
       ))}
 
       <Text style={styles.sectionTitle}>Recent Activity</Text>
-      {activity.slice(0, 6).map((item, index) => (
-        <View key={index} style={styles.activityCard}>
-          <Text style={styles.activityText}>• {item}</Text>
+      {activity.length === 0 ? (
+        <View style={styles.emptyFeatureCard}>
+          <Text style={styles.emptyFeatureTitle}>No activity yet</Text>
+          <Text style={styles.emptyFeatureText}>Start building your collection</Text>
         </View>
-      ))}
+      ) : (
+        activity.slice(0, 6).map((item, index) => (
+          <View key={index} style={styles.activityCard}>
+            <Text style={styles.activityText}>• {item}</Text>
+          </View>
+        ))
+      )}
     </ScrollView>
   );
 }
@@ -802,6 +809,8 @@ export default function HomeScreen() {
   const [purchaseDate, setPurchaseDate] = useState("");
   const [purchaseCondition, setPurchaseCondition] = useState("Good");
   const [purchasedAtDetail, setPurchasedAtDetail] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+  const [successMessageTimer, setSuccessMessageTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
 
   const achievementCategories = calculateAchievementCategories(records, wishlist, storeCheckIns, activity);
   const unlockedBadgeCount = achievementCategories
@@ -849,6 +858,15 @@ export default function HomeScreen() {
     saveRecordQuestState({ records, wishlist, activity, storeCheckIns });
   }, [records, wishlist, activity, storeCheckIns, loaded]);
 
+  function showSuccess(message: string) {
+    if (successMessageTimer) clearTimeout(successMessageTimer);
+    setSuccessMessage(message);
+    const timer = setTimeout(() => {
+      setSuccessMessage("");
+    }, 2800);
+    setSuccessMessageTimer(timer);
+  }
+
   async function addRecord(toWishlist: boolean) {
     if (!album.trim() || !artist.trim()) return;
 
@@ -879,9 +897,11 @@ export default function HomeScreen() {
     if (toWishlist) {
       setWishlist([newItem, ...wishlist]);
       setActivity([`Added ${newItem.album} to wishlist`, ...activity]);
+      showSuccess(`✓ Added to Wishlist`);
     } else {
       setRecords([newItem, ...records]);
       setActivity([`Added ${newItem.album} to collection`, ...activity]);
+      showSuccess(`✓ Added to Collection`);
     }
 
     setAlbum("");
@@ -949,6 +969,7 @@ export default function HomeScreen() {
     setWishlist(wishlist.filter((w) => w.id !== recordBeingPromoted.id));
     setRecords([updatedRecord, ...records]);
     setActivity([`Found ${updatedRecord.album}`, ...activity]);
+    showSuccess(`✓ Found ${updatedRecord.album}`);
 
     setShowPurchaseModal(false);
     setRecordBeingPromoted(null);
@@ -977,16 +998,19 @@ export default function HomeScreen() {
       ...current,
       [store.id]: (current[store.id] ?? 0) + 1,
     }));
+    showSuccess(`✓ Checked in at ${store.name}`);
   }
 
   function removeRecord(item: RecordItem) {
     setRecords(records.filter((record) => record.id !== item.id));
     setActivity([`Removed ${item.album} from collection`, ...activity]);
+    showSuccess(`✓ Removed from Collection`);
   }
 
   function removeWishlist(item: RecordItem) {
     setWishlist(wishlist.filter((wish) => wish.id !== item.id));
     setActivity([`Removed ${item.album} from wishlist`, ...activity]);
+    showSuccess(`✓ Removed from Wishlist`);
   }
 
   function openRecordDetail(item: RecordItem, source: "Collection" | "Wishlist") {
@@ -1022,6 +1046,7 @@ export default function HomeScreen() {
     setRecordDraft(updatedRecord);
     setIsEditingRecord(false);
     setActivity((currentActivity) => [`Updated ${updatedRecord.album}`, ...currentActivity]);
+    showSuccess(`✓ Saved`);
   }
 
   function deleteRecordDetail() {
@@ -1030,9 +1055,11 @@ export default function HomeScreen() {
     if (detailSource === "Collection") {
       setRecords((current) => current.filter((record) => record.id !== selectedRecord.id));
       setActivity((currentActivity) => [`Deleted ${selectedRecord.album} from collection`, ...currentActivity]);
+      showSuccess(`✓ Removed from Collection`);
     } else {
       setWishlist((current) => current.filter((record) => record.id !== selectedRecord.id));
       setActivity((currentActivity) => [`Deleted ${selectedRecord.album} from wishlist`, ...currentActivity]);
+      showSuccess(`✓ Removed from Wishlist`);
     }
 
     setSelectedRecord(null);
@@ -1186,37 +1213,44 @@ export default function HomeScreen() {
         <ScrollView contentContainerStyle={styles.page}>
           <TopBar title="Find Stores" back={() => setScreen("Home")} />
           <Text style={styles.screenSubtitle}>Local record stores around Needham</Text>
-          {recordStores.map((store) => (
-            <View key={store.id} style={styles.storeCard}>
-              <View style={styles.storeHeader}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.storeName}>{store.name}</Text>
-                  <Text style={styles.storeNeighborhood}>{store.neighborhood}</Text>
-                </View>
-                <Text style={styles.storeDistance}>{store.distance}</Text>
-              </View>
-              <Text style={styles.storeAddress}>{store.address}</Text>
-              <View style={styles.storeMetaRow}>
-                <Text style={styles.storeMetaText}>{store.hours}</Text>
-                <Text style={styles.storeMetaText}>{store.rating}</Text>
-                <Text style={styles.storeMetaText}>{`Visits ${storeCheckIns[store.id] ?? 0}`}</Text>
-              </View>
-              <View style={styles.storeButtonsRow}>
-                <Pressable style={styles.storeButton} onPress={() => openDirections(store.address)}>
-                  <Text style={styles.storeButtonText}>Directions</Text>
-                </Pressable>
-                <Pressable style={[styles.storeButton, styles.viewStoreButton]} onPress={() => {
-                  setDetailStore(store);
-                  setScreen("StoreDetail");
-                }}>
-                  <Text style={styles.storeButtonText}>View Store</Text>
-                </Pressable>
-                <Pressable style={[styles.storeButton, styles.checkInButton]} onPress={() => checkIn(store)}>
-                  <Text style={[styles.storeButtonText, styles.checkInButtonText]}>Check In</Text>
-                </Pressable>
-              </View>
+          {recordStores.length === 0 ? (
+            <View style={styles.emptyFeatureCard}>
+              <Text style={styles.emptyFeatureTitle}>No stores found</Text>
+              <Text style={styles.emptyFeatureText}>Try adjusting your location</Text>
             </View>
-          ))}
+          ) : (
+            recordStores.map((store) => (
+              <View key={store.id} style={styles.storeCard}>
+                <View style={styles.storeHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.storeName}>{store.name}</Text>
+                    <Text style={styles.storeNeighborhood}>{store.neighborhood}</Text>
+                  </View>
+                  <Text style={styles.storeDistance}>{store.distance}</Text>
+                </View>
+                <Text style={styles.storeAddress}>{store.address}</Text>
+                <View style={styles.storeMetaRow}>
+                  <Text style={styles.storeMetaText}>{store.hours}</Text>
+                  <Text style={styles.storeMetaText}>{store.rating}</Text>
+                  <Text style={styles.storeMetaText}>{`Visits ${storeCheckIns[store.id] ?? 0}`}</Text>
+                </View>
+                <View style={styles.storeButtonsRow}>
+                  <Pressable style={styles.storeButton} onPress={() => openDirections(store.address)}>
+                    <Text style={styles.storeButtonText}>Directions</Text>
+                  </Pressable>
+                  <Pressable style={[styles.storeButton, styles.viewStoreButton]} onPress={() => {
+                    setDetailStore(store);
+                    setScreen("StoreDetail");
+                  }}>
+                    <Text style={styles.storeButtonText}>View Store</Text>
+                  </Pressable>
+                  <Pressable style={[styles.storeButton, styles.checkInButton]} onPress={() => checkIn(store)}>
+                    <Text style={[styles.storeButtonText, styles.checkInButtonText]}>Check In</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ))
+          )}
         </ScrollView>
       )}
 
@@ -1252,6 +1286,12 @@ export default function HomeScreen() {
           setPurchaseCondition("Good");
         }}
       />
+
+      {successMessage !== "" && (
+        <View style={styles.successMessageContainer}>
+          <Text style={styles.successMessageText}>{successMessage}</Text>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -1436,17 +1476,24 @@ function StatCard({ value, label }: { value: number; label: string }) {
 }
 
 function AnalyticsCard({ value, label, icon = "📊" }: { value: string | number; label: string; icon?: string }) {
-  // Auto-scale font size based on value length for long strings
+  // Auto-scale font size based on value length
   const valueStr = String(value);
-  const valueFontSize = valueStr.length > 12 ? 11 : valueStr.length > 8 ? 13 : 14;
+  let valueFontSize = 16;
+  if (valueStr.length > 15) valueFontSize = 10;
+  else if (valueStr.length > 12) valueFontSize = 11;
+  else if (valueStr.length > 8) valueFontSize = 13;
   
   return (
     <View style={styles.analyticsCard}>
       <Text style={styles.analyticsCardIcon}>{icon}</Text>
-      <Text style={[styles.analyticsCardValue, { fontSize: valueFontSize }]} numberOfLines={1}>
+      <Text 
+        style={[styles.analyticsCardValue, { fontSize: valueFontSize }]} 
+        numberOfLines={1}
+        ellipsizeMode="tail"
+      >
         {value}
       </Text>
-      <Text style={styles.analyticsCardLabel}>{label}</Text>
+      <Text style={styles.analyticsCardLabel} numberOfLines={2}>{label}</Text>
     </View>
   );
 }
@@ -2208,15 +2255,15 @@ const styles = StyleSheet.create({
   },
   analyticsCard: {
     backgroundColor: "rgba(18, 16, 38, 0.96)",
-    borderRadius: 24,
-    padding: 18,
+    borderRadius: 20,
+    padding: 16,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.20)",
     flex: 1,
-    minHeight: 150,
-    paddingVertical: 20,
+    minWidth: "48%",
+    minHeight: 140,
   },
   analyticsCardIcon: {
     fontSize: 26,
@@ -2228,22 +2275,24 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginBottom: 6,
     textAlign: "center",
-    maxWidth: "95%",
+    maxWidth: "100%",
+    flex: 1,
   },
   analyticsCardLabel: {
     color: "#a7a1bd",
     fontSize: 10,
     textAlign: "center",
-    lineHeight: 14,
+    lineHeight: 12,
     fontWeight: "600",
-    marginTop: 2,
+    marginTop: 4,
+    maxWidth: "100%",
   },
   analyticsGrid: {
     flexDirection: "row",
-    gap: 13,
-    marginBottom: 24,
+    gap: 12,
+    marginBottom: 20,
     flexWrap: "wrap",
-    justifyContent: "space-between",
+    justifyContent: "flex-start",
   },
   analyticsSectionHeader: {
     flexDirection: "row",
@@ -2649,5 +2698,26 @@ const styles = StyleSheet.create({
     color: "#a7a1bd",
     fontSize: 14,
     fontWeight: "800",
+  },
+  successMessageContainer: {
+    position: "absolute",
+    top: 60,
+    alignSelf: "center",
+    backgroundColor: "rgba(124, 58, 237, 0.95)",
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    zIndex: 9999,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  successMessageText: {
+    color: "#fff4d6",
+    fontSize: 14,
+    fontWeight: "600",
+    textAlign: "center",
   },
 });
