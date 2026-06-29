@@ -625,55 +625,6 @@ function StoreDetailSection({
   );
 }
 
-function StoresSection({
-  recordStores,
-  storeCheckIns,
-  openDirections,
-  checkIn,
-  onViewStore,
-}: {
-  recordStores: StoreItem[];
-  storeCheckIns: Record<string, number>;
-  openDirections: (address: string) => void;
-  checkIn: (store: StoreItem) => void;
-  onViewStore: (store: StoreItem) => void;
-}) {
-  return (
-    <ScrollView contentContainerStyle={styles.page}>
-      <TopBar title="Find Stores" back={() => {}} />
-      <Text style={styles.screenSubtitle}>Local record stores around Needham</Text>
-      {recordStores.map((store) => (
-        <View key={store.id} style={styles.storeCard}>
-          <View style={styles.storeHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.storeName}>{store.name}</Text>
-              <Text style={styles.storeNeighborhood}>{store.neighborhood}</Text>
-            </View>
-            <Text style={styles.storeDistance}>{store.distance}</Text>
-          </View>
-          <Text style={styles.storeAddress}>{store.address}</Text>
-          <View style={styles.storeMetaRow}>
-            <Text style={styles.storeMetaText}>{store.hours}</Text>
-            <Text style={styles.storeMetaText}>{store.rating}</Text>
-            <Text style={styles.storeMetaText}>{`Visits ${storeCheckIns[store.id] ?? 0}`}</Text>
-          </View>
-          <View style={styles.storeButtonsRow}>
-            <Pressable style={styles.storeButton} onPress={() => openDirections(store.address)}>
-              <Text style={styles.storeButtonText}>Directions</Text>
-            </Pressable>
-            <Pressable style={[styles.storeButton, styles.viewStoreButton]} onPress={() => onViewStore(store)}>
-              <Text style={styles.storeButtonText}>View Store</Text>
-            </Pressable>
-            <Pressable style={[styles.storeButton, styles.checkInButton]} onPress={() => checkIn(store)}>
-              <Text style={[styles.storeButtonText, styles.checkInButtonText]}>Check In</Text>
-            </Pressable>
-          </View>
-        </View>
-      ))}
-    </ScrollView>
-  );
-}
-
 function ConfirmPurchaseDetailsModal({
   visible,
   record,
@@ -858,6 +809,15 @@ export default function HomeScreen() {
     saveRecordQuestState({ records, wishlist, activity, storeCheckIns });
   }, [records, wishlist, activity, storeCheckIns, loaded]);
 
+  // Cleanup success message timer on unmount
+  useEffect(() => {
+    return () => {
+      if (successMessageTimer) {
+        clearTimeout(successMessageTimer);
+      }
+    };
+  }, [successMessageTimer]);
+
   function showSuccess(message: string) {
     if (successMessageTimer) clearTimeout(successMessageTimer);
     setSuccessMessage(message);
@@ -868,12 +828,18 @@ export default function HomeScreen() {
   }
 
   async function addRecord(toWishlist: boolean) {
-    if (!album.trim() || !artist.trim()) return;
+    const trimmedAlbum = album.trim();
+    const trimmedArtist = artist.trim();
+    
+    if (!trimmedAlbum || !trimmedArtist) {
+      setSearchMessage("Please enter both album name and artist.");
+      return;
+    }
 
     const baseItem: RecordItem = {
       id: Date.now(),
-      album: album.trim(),
-      artist: artist.trim(),
+      album: trimmedAlbum,
+      artist: trimmedArtist,
       year: "Unknown",
       genre: "Vinyl",
       cover: placeholderCover,
@@ -934,6 +900,7 @@ export default function HomeScreen() {
 
   function handleAlbumInputChange(value: string) {
     setAlbum(value);
+    // Clear all search/selection state when user starts typing
     setSelectedMetadata(null);
     setSearchResults([]);
     setSearchMessage("");
@@ -1070,11 +1037,14 @@ export default function HomeScreen() {
   }
 
   function closeRecordDetail() {
+    // Save the destination before clearing state
+    const targetScreen = detailSource === "Collection" ? "Collection" : detailSource === "Wishlist" ? "Wishlist" : "Home";
+    
     setSelectedRecord(null);
     setDetailSource(null);
     setIsEditingRecord(false);
     setRecordDraft({});
-    setScreen(detailSource || "Home");
+    setScreen(targetScreen);
   }
 
   return (
