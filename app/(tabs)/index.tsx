@@ -68,6 +68,29 @@ type AchievementCategory = {
   badges: AchievementBadge[];
 };
 
+type RecordListScreenProps = {
+  title: string;
+  subtitle: string;
+  records: RecordItem[];
+  album: string;
+  artist: string;
+  purchasedAt: string;
+  setPurchasedAt: (value: string) => void;
+  searchResults: AlbumSearchResult[];
+  selectedMetadata: AlbumSearchResult | null;
+  isSearching: boolean;
+  searchMessage: string;
+  onAlbumChange: (value: string) => void;
+  onArtistChange: (value: string) => void;
+  onSearch: () => void;
+  onSelectResult: (result: AlbumSearchResult) => void;
+  onAdd: () => void;
+  back: () => void;
+  onFound?: (record: RecordItem) => void;
+  onRemove?: (record: RecordItem) => void;
+  onViewRecord: (record: RecordItem) => void;
+};
+
 function calculateAchievementCategories(
   records: RecordItem[],
   wishlist: RecordItem[],
@@ -180,6 +203,319 @@ const recordStores: StoreItem[] = [
     description: "Bright shop with new and used vinyl, plus a small listening room for previewing stacks.",
   },
 ];
+
+function AlbumDetailScreen({
+  selectedRecord,
+  isEditingRecord,
+  recordDraft,
+  updateRecordDraft,
+  saveRecordDetail,
+  deleteRecordDetail,
+  setIsEditingRecord,
+  closeRecordDetail,
+}: {
+  selectedRecord: RecordItem;
+  isEditingRecord: boolean;
+  recordDraft: Partial<RecordItem>;
+  updateRecordDraft: (field: keyof RecordItem, value: string | number) => void;
+  saveRecordDetail: () => void;
+  deleteRecordDetail: () => void;
+  setIsEditingRecord: (value: boolean) => void;
+  closeRecordDetail: () => void;
+}) {
+  const selectedRating = (recordDraft.rating ?? selectedRecord.rating ?? 0) as number;
+
+  return (
+    <ScrollView contentContainerStyle={styles.page}>
+      <TopBar title="Collector Journal" back={closeRecordDetail} />
+      <View style={styles.detailCard}>
+        <Image source={{ uri: selectedRecord.cover }} style={styles.detailCover} />
+        <Text style={styles.detailTitle}>{selectedRecord.album}</Text>
+        <Text style={styles.detailArtist}>{selectedRecord.artist}</Text>
+        <View style={styles.metaRow}>
+          <Text style={styles.genrePill}>{selectedRecord.genre}</Text>
+          <Text style={styles.yearText}>{selectedRecord.year}</Text>
+        </View>
+
+        <View style={styles.journalCard}>
+          <Text style={styles.journalHeader}>Collector Details</Text>
+
+          <View style={styles.journalField}>
+            <Text style={styles.journalLabel}>Purchased At</Text>
+            {isEditingRecord ? (
+              <TextInput
+                style={styles.journalInput}
+                value={recordDraft.purchasedAt ?? ""}
+                onChangeText={(value) => updateRecordDraft("purchasedAt", value)}
+                placeholder="Where did you buy it?"
+                placeholderTextColor="#8b7fe0"
+              />
+            ) : (
+              <Text style={styles.journalValue}>{selectedRecord.purchasedAt || "Not recorded"}</Text>
+            )}
+          </View>
+
+          <View style={styles.columnRow}>
+            <View style={styles.journalHalfField}>
+              <Text style={styles.journalLabel}>Purchase Date</Text>
+              {isEditingRecord ? (
+                <TextInput
+                  style={styles.journalInput}
+                  value={recordDraft.purchaseDate ?? ""}
+                  onChangeText={(value) => updateRecordDraft("purchaseDate", value)}
+                  placeholder="MM/DD/YYYY"
+                  placeholderTextColor="#8b7fe0"
+                />
+              ) : (
+                <Text style={styles.journalValue}>{selectedRecord.purchaseDate || "Unknown"}</Text>
+              )}
+            </View>
+            <View style={styles.journalHalfField}>
+              <Text style={styles.journalLabel}>Price Paid</Text>
+              {isEditingRecord ? (
+                <TextInput
+                  style={styles.journalInput}
+                  value={recordDraft.price ?? ""}
+                  onChangeText={(value) => updateRecordDraft("price", value)}
+                  placeholder="$0.00"
+                  placeholderTextColor="#8b7fe0"
+                  keyboardType="numeric"
+                />
+              ) : (
+                <Text style={styles.journalValue}>{selectedRecord.price ? `$${selectedRecord.price}` : "Not recorded"}</Text>
+              )}
+            </View>
+          </View>
+
+          <View style={styles.journalField}>
+            <Text style={styles.journalLabel}>Condition</Text>
+            {isEditingRecord ? (
+              <TextInput
+                style={styles.journalInput}
+                value={recordDraft.condition ?? ""}
+                onChangeText={(value) => updateRecordDraft("condition", value)}
+                placeholder="Mint, Excellent, Good…"
+                placeholderTextColor="#8b7fe0"
+              />
+            ) : (
+              <Text style={styles.journalValue}>{selectedRecord.condition || "Good"}</Text>
+            )}
+          </View>
+
+          <View style={styles.journalField}>
+            <Text style={styles.journalLabel}>Favorite Track</Text>
+            {isEditingRecord ? (
+              <TextInput
+                style={styles.journalInput}
+                value={recordDraft.favoriteTrack ?? ""}
+                onChangeText={(value) => updateRecordDraft("favoriteTrack", value)}
+                placeholder="Track name..."
+                placeholderTextColor="#8b7fe0"
+              />
+            ) : (
+              <Text style={styles.journalValue}>{selectedRecord.favoriteTrack || "Not noted"}</Text>
+            )}
+          </View>
+
+          <View style={styles.journalField}>
+            <Text style={styles.journalLabel}>Your Story</Text>
+            {isEditingRecord ? (
+              <TextInput
+                style={[styles.journalInput, styles.journalStoryInput]}
+                multiline
+                value={recordDraft.notes ?? ""}
+                onChangeText={(value) => updateRecordDraft("notes", value)}
+                placeholder="What makes this pressing special?"
+                placeholderTextColor="#8b7fe0"
+              />
+            ) : (
+              <Text style={styles.journalStoryText}>{selectedRecord.notes || "Share the story behind this record."}</Text>
+            )}
+          </View>
+
+          <View style={styles.ratingRow}>
+            <Text style={styles.journalLabel}>Personal Rating</Text>
+            <View style={styles.starsRow}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <Pressable
+                  key={star}
+                  onPress={() => isEditingRecord && updateRecordDraft("rating", star)}
+                  style={styles.starButton}
+                >
+                  <Text style={[styles.starText, star <= selectedRating ? styles.starActive : styles.starInactive]}>
+                    {star <= selectedRating ? "★" : "☆"}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.detailFooterRow}>
+          {isEditingRecord ? (
+            <Pressable style={styles.saveButton} onPress={saveRecordDetail}>
+              <Text style={styles.saveButtonText}>Save Story</Text>
+            </Pressable>
+          ) : (
+            <Pressable style={styles.editButton} onPress={() => setIsEditingRecord(true)}>
+              <Text style={styles.editButtonText}>Edit</Text>
+            </Pressable>
+          )}
+
+          <Pressable style={styles.deleteButton} onPress={deleteRecordDetail}>
+            <Text style={styles.deleteButtonText}>Delete</Text>
+          </Pressable>
+        </View>
+      </View>
+    </ScrollView>
+  );
+}
+
+function ProfileSection({
+  records,
+  wishlist,
+  unlockedBadgeCount,
+  achievementCategories,
+  activity,
+  onBack,
+}: {
+  records: RecordItem[];
+  wishlist: RecordItem[];
+  unlockedBadgeCount: number;
+  achievementCategories: AchievementCategory[];
+  activity: string[];
+  onBack: () => void;
+}) {
+  return (
+    <ScrollView contentContainerStyle={styles.page}>
+      <TopBar title="Profile" back={onBack} />
+
+      <View style={styles.profileCard}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>A</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.profileName}>Arie</Text>
+          <Text style={styles.profileSub}>Vinyl collector</Text>
+          <Text style={styles.profileBio}>Building the ultimate crate-digging log.</Text>
+        </View>
+      </View>
+
+      <View style={styles.statsRow}>
+        <StatCard value={records.length} label="Records" />
+        <StatCard value={wishlist.length} label="Wishlist" />
+        <StatCard value={unlockedBadgeCount} label="Badges" />
+      </View>
+
+      <Text style={styles.sectionTitle}>Achievements</Text>
+      {achievementCategories.map((category) => (
+        <View key={category.title} style={styles.achievementCategory}>
+          <Text style={styles.achievementCategoryTitle}>{category.title}</Text>
+          <View style={styles.achievementGrid}>
+            {category.badges.map((badge) => (
+              <AchievementBadgeCard key={badge.id} badge={badge} />
+            ))}
+          </View>
+        </View>
+      ))}
+
+      <Text style={styles.sectionTitle}>Recent Activity</Text>
+      {activity.slice(0, 6).map((item, index) => (
+        <View key={index} style={styles.activityCard}>
+          <Text style={styles.activityText}>• {item}</Text>
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
+function StoreDetailSection({
+  detailStore,
+  storeCheckIns,
+  openDirections,
+  checkIn,
+  onBack,
+}: {
+  detailStore: StoreItem;
+  storeCheckIns: Record<string, number>;
+  openDirections: (address: string) => void;
+  checkIn: (store: StoreItem) => void;
+  onBack: () => void;
+}) {
+  return (
+    <ScrollView contentContainerStyle={styles.page}>
+      <TopBar title="Store Details" back={onBack} />
+      <View style={styles.storeDetailCard}>
+        <Text style={styles.storeDetailName}>{detailStore.name}</Text>
+        <View style={styles.storeMetaRow}>
+          <Text style={styles.storeMetaText}>{detailStore.rating}</Text>
+          <Text style={styles.storeMetaText}>{detailStore.distance}</Text>
+          <Text style={styles.storeMetaText}>{`Visits ${storeCheckIns[detailStore.id] ?? 0}`}</Text>
+        </View>
+        <Text style={styles.storeAddress}>{detailStore.address}</Text>
+        <Text style={styles.storeMetaText}>{detailStore.hours}</Text>
+        <Text style={styles.storeDescription}>{detailStore.description}</Text>
+        <View style={styles.storeButtonsRow}>
+          <Pressable style={styles.storeButton} onPress={() => openDirections(detailStore.address)}>
+            <Text style={styles.storeButtonText}>Directions</Text>
+          </Pressable>
+          <Pressable style={[styles.storeButton, styles.checkInButton]} onPress={() => checkIn(detailStore)}>
+            <Text style={[styles.storeButtonText, styles.checkInButtonText]}>Check In</Text>
+          </Pressable>
+        </View>
+      </View>
+    </ScrollView>
+  );
+}
+
+function StoresSection({
+  recordStores,
+  storeCheckIns,
+  openDirections,
+  checkIn,
+  onViewStore,
+}: {
+  recordStores: StoreItem[];
+  storeCheckIns: Record<string, number>;
+  openDirections: (address: string) => void;
+  checkIn: (store: StoreItem) => void;
+  onViewStore: (store: StoreItem) => void;
+}) {
+  return (
+    <ScrollView contentContainerStyle={styles.page}>
+      <TopBar title="Find Stores" back={() => {}} />
+      <Text style={styles.screenSubtitle}>Local record stores around Needham</Text>
+      {recordStores.map((store) => (
+        <View key={store.id} style={styles.storeCard}>
+          <View style={styles.storeHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.storeName}>{store.name}</Text>
+              <Text style={styles.storeNeighborhood}>{store.neighborhood}</Text>
+            </View>
+            <Text style={styles.storeDistance}>{store.distance}</Text>
+          </View>
+          <Text style={styles.storeAddress}>{store.address}</Text>
+          <View style={styles.storeMetaRow}>
+            <Text style={styles.storeMetaText}>{store.hours}</Text>
+            <Text style={styles.storeMetaText}>{store.rating}</Text>
+            <Text style={styles.storeMetaText}>{`Visits ${storeCheckIns[store.id] ?? 0}`}</Text>
+          </View>
+          <View style={styles.storeButtonsRow}>
+            <Pressable style={styles.storeButton} onPress={() => openDirections(store.address)}>
+              <Text style={styles.storeButtonText}>Directions</Text>
+            </Pressable>
+            <Pressable style={[styles.storeButton, styles.viewStoreButton]} onPress={() => onViewStore(store)}>
+              <Text style={styles.storeButtonText}>View Store</Text>
+            </Pressable>
+            <Pressable style={[styles.storeButton, styles.checkInButton]} onPress={() => checkIn(store)}>
+              <Text style={[styles.storeButtonText, styles.checkInButtonText]}>Check In</Text>
+            </Pressable>
+          </View>
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
 
 export default function HomeScreen() {
   const [screen, setScreen] = useState("Home");
@@ -520,212 +856,40 @@ export default function HomeScreen() {
       )}
 
       {screen === "StoreDetail" && detailStore && (
-        <ScrollView contentContainerStyle={styles.page}>
-          <TopBar title="Store Details" back={() => {
+        <StoreDetailSection
+          detailStore={detailStore}
+          storeCheckIns={storeCheckIns}
+          openDirections={openDirections}
+          checkIn={checkIn}
+          onBack={() => {
             setDetailStore(null);
             setScreen("Stores");
-          }} />
-          <View style={styles.storeDetailCard}>
-            <Text style={styles.storeDetailName}>{detailStore.name}</Text>
-            <View style={styles.storeMetaRow}>
-              <Text style={styles.storeMetaText}>{detailStore.rating}</Text>
-              <Text style={styles.storeMetaText}>{detailStore.distance}</Text>
-              <Text style={styles.storeMetaText}>{`Visits ${storeCheckIns[detailStore.id] ?? 0}`}</Text>
-            </View>
-            <Text style={styles.storeAddress}>{detailStore.address}</Text>
-            <Text style={styles.storeMetaText}>{detailStore.hours}</Text>
-            <Text style={styles.storeDescription}>{detailStore.description}</Text>
-            <View style={styles.storeButtonsRow}>
-              <Pressable style={styles.storeButton} onPress={() => openDirections(detailStore.address)}>
-                <Text style={styles.storeButtonText}>Directions</Text>
-              </Pressable>
-              <Pressable style={[styles.storeButton, styles.checkInButton]} onPress={() => checkIn(detailStore)}>
-                <Text style={[styles.storeButtonText, styles.checkInButtonText]}>Check In</Text>
-              </Pressable>
-            </View>
-          </View>
-        </ScrollView>
+          }}
+        />
       )}
 
       {screen === "AlbumDetail" && selectedRecord && (
-        <ScrollView contentContainerStyle={styles.page}>
-          <TopBar title="Collector Journal" back={closeRecordDetail} />
-          <View style={styles.detailCard}>
-            <Image source={{ uri: selectedRecord.cover }} style={styles.detailCover} />
-            <Text style={styles.detailTitle}>{selectedRecord.album}</Text>
-            <Text style={styles.detailArtist}>{selectedRecord.artist}</Text>
-            <View style={styles.metaRow}>
-              <Text style={styles.genrePill}>{selectedRecord.genre}</Text>
-              <Text style={styles.yearText}>{selectedRecord.year}</Text>
-            </View>
-            <View style={styles.journalCard}>
-              <Text style={styles.journalHeader}>Collector Details</Text>
-              <View style={styles.journalField}>
-                <Text style={styles.journalLabel}>Purchased At</Text>
-                {isEditingRecord ? (
-                  <TextInput
-                    style={styles.journalInput}
-                    value={recordDraft.purchasedAt ?? ""}
-                    onChangeText={(value) => updateRecordDraft("purchasedAt", value)}
-                    placeholder="Where did you buy it?"
-                    placeholderTextColor="#8b7fe0"
-                  />
-                ) : (
-                  <Text style={styles.journalValue}>{selectedRecord.purchasedAt || "Not recorded"}</Text>
-                )}
-              </View>
-              <View style={styles.columnRow}>
-                <View style={styles.journalHalfField}>
-                  <Text style={styles.journalLabel}>Purchase Date</Text>
-                  {isEditingRecord ? (
-                    <TextInput
-                      style={styles.journalInput}
-                      value={recordDraft.purchaseDate ?? ""}
-                      onChangeText={(value) => updateRecordDraft("purchaseDate", value)}
-                      placeholder="MM/DD/YYYY"
-                      placeholderTextColor="#8b7fe0"
-                    />
-                  ) : (
-                    <Text style={styles.journalValue}>{selectedRecord.purchaseDate || "Unknown"}</Text>
-                  )}
-                </View>
-                <View style={styles.journalHalfField}>
-                  <Text style={styles.journalLabel}>Price Paid</Text>
-                  {isEditingRecord ? (
-                    <TextInput
-                      style={styles.journalInput}
-                      value={recordDraft.price ?? ""}
-                      onChangeText={(value) => updateRecordDraft("price", value)}
-                      placeholder="$0.00"
-                      placeholderTextColor="#8b7fe0"
-                      keyboardType="numeric"
-                    />
-                  ) : (
-                    <Text style={styles.journalValue}>{selectedRecord.price ? `$${selectedRecord.price}` : "Not recorded"}</Text>
-                  )}
-                </View>
-              </View>
-              <View style={styles.journalField}>
-                <Text style={styles.journalLabel}>Condition</Text>
-                {isEditingRecord ? (
-                  <TextInput
-                    style={styles.journalInput}
-                    value={recordDraft.condition ?? ""}
-                    onChangeText={(value) => updateRecordDraft("condition", value)}
-                    placeholder="Mint, Excellent, Good…"
-                    placeholderTextColor="#8b7fe0"
-                  />
-                ) : (
-                  <Text style={styles.journalValue}>{selectedRecord.condition || "Good"}</Text>
-                )}
-              </View>
-              <View style={styles.journalField}>
-                <Text style={styles.journalLabel}>Favorite Track</Text>
-                {isEditingRecord ? (
-                  <TextInput
-                    style={styles.journalInput}
-                    value={recordDraft.favoriteTrack ?? ""}
-                    onChangeText={(value) => updateRecordDraft("favoriteTrack", value)}
-                    placeholder="Track name..."
-                    placeholderTextColor="#8b7fe0"
-                  />
-                ) : (
-                  <Text style={styles.journalValue}>{selectedRecord.favoriteTrack || "Not noted"}</Text>
-                )}
-              </View>
-              <View style={styles.journalField}>
-                <Text style={styles.journalLabel}>Your Story</Text>
-                {isEditingRecord ? (
-                  <TextInput
-                    style={[styles.journalInput, styles.journalStoryInput]}
-                    multiline
-                    value={recordDraft.notes ?? ""}
-                    onChangeText={(value) => updateRecordDraft("notes", value)}
-                    placeholder="What makes this pressing special?"
-                    placeholderTextColor="#8b7fe0"
-                  />
-                ) : (
-                  <Text style={styles.journalStoryText}>{selectedRecord.notes || "Share the story behind this record."}</Text>
-                )}
-              </View>
-              <View style={styles.ratingRow}>
-                <Text style={styles.journalLabel}>Personal Rating</Text>
-                <View style={styles.starsRow}>
-                  {[1, 2, 3, 4, 5].map((star) => {
-                    const selectedRating = recordDraft.rating ?? selectedRecord.rating ?? 0;
-                    return (
-                      <Pressable
-                        key={star}
-                        onPress={() => isEditingRecord && updateRecordDraft("rating", star)}
-                        style={styles.starButton}
-                      >
-                        <Text style={[styles.starText, star <= selectedRating ? styles.starActive : styles.starInactive]}>
-                          {star <= selectedRating ? "★" : "☆"}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </View>
-            </View>
-            <View style={styles.detailFooterRow}>
-              {isEditingRecord ? (
-                <Pressable style={styles.saveButton} onPress={saveRecordDetail}>
-                  <Text style={styles.saveButtonText}>Save Story</Text>
-                </Pressable>
-              ) : (
-                <Pressable style={styles.editButton} onPress={() => setIsEditingRecord(true)}>
-                  <Text style={styles.editButtonText}>Edit</Text>
-                </Pressable>
-              )}
-              <Pressable style={styles.deleteButton} onPress={deleteRecordDetail}>
-                <Text style={styles.deleteButtonText}>Delete</Text>
-              </Pressable>
-            </View>
-          </View>
-        </ScrollView>
+        <AlbumDetailScreen
+          selectedRecord={selectedRecord}
+          isEditingRecord={isEditingRecord}
+          recordDraft={recordDraft}
+          updateRecordDraft={updateRecordDraft}
+          saveRecordDetail={saveRecordDetail}
+          deleteRecordDetail={deleteRecordDetail}
+          setIsEditingRecord={setIsEditingRecord}
+          closeRecordDetail={closeRecordDetail}
+        />
       )}
 
       {screen === "Profile" && (
-        <ScrollView contentContainerStyle={styles.page}>
-          <TopBar title="Profile" back={() => setScreen("Home")} />
-
-          <View style={styles.profileCard}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>A</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.profileName}>Arie</Text>
-              <Text style={styles.profileSub}>Vinyl collector</Text>
-              <Text style={styles.profileBio}>Building the ultimate crate-digging log.</Text>
-            </View>
-          </View>
-
-          <View style={styles.statsRow}>
-            <StatCard value={records.length} label="Records" />
-            <StatCard value={wishlist.length} label="Wishlist" />
-            <StatCard value={unlockedBadgeCount} label="Badges" />
-          </View>
-
-          <Text style={styles.sectionTitle}>Achievements</Text>
-          {achievementCategories.map((category) => (
-            <View key={category.title} style={styles.achievementCategory}>
-              <Text style={styles.achievementCategoryTitle}>{category.title}</Text>
-              <View style={styles.achievementGrid}>
-                {category.badges.map((badge) => (
-                  <AchievementBadgeCard key={badge.id} badge={badge} />
-                ))}
-              </View>
-            </View>
-          ))}
-
-          <Text style={styles.sectionTitle}>Recent Activity</Text>
-          {activity.slice(0, 6).map((item, index) => (
-            <View key={index} style={styles.activityCard}>
-              <Text style={styles.activityText}>• {item}</Text>
-            </View>
-          ))}
-        </ScrollView>
+        <ProfileSection
+          records={records}
+          wishlist={wishlist}
+          unlockedBadgeCount={unlockedBadgeCount}
+          achievementCategories={achievementCategories}
+          activity={activity}
+          onBack={() => setScreen("Home")}
+        />
       )}
 
       {screen === "Stores" && !detailStore && (
@@ -801,7 +965,7 @@ function RecordListScreen({
   onFound,
   onRemove,
   onViewRecord,
-}: any) {
+}: RecordListScreenProps) {
   return (
     <ScrollView contentContainerStyle={styles.page}>
       <TopBar title={title} back={back} />
@@ -1091,7 +1255,7 @@ const styles = StyleSheet.create({
   },
   homeCard: {
     backgroundColor: "rgba(24, 23, 46, 0.96)",
-    borderRadius: 24,
+    borderRadius: 28,
     padding: 24,
     marginBottom: 18,
     borderWidth: 1,
@@ -1106,18 +1270,18 @@ const styles = StyleSheet.create({
   },
   homeCardTitle: {
     color: "#fff4d6",
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "900",
   },
   homeCardSubtitle: {
-    color: "#c7b8ea",
+    color: "#c8b6d5",
     fontSize: 13,
     marginTop: 6,
     maxWidth: "78%",
   },
   homeArrow: {
-    color: "#dfc0ff",
-    fontSize: 38,
+    color: "#d6c0ff",
+    fontSize: 28,
     fontWeight: "300",
   },
   topBar: {
@@ -1149,9 +1313,10 @@ const styles = StyleSheet.create({
   },
   screenSubtitle: {
     color: "#C4BEE0",
-    fontSize: 17,
-    fontWeight: "800",
-    marginBottom: 18,
+    fontSize: 15,
+    fontWeight: "700",
+    marginBottom: 20,
+    lineHeight: 22,
   },
   addPanel: {
     backgroundColor: "rgba(20, 18, 38, 0.96)",
@@ -1168,10 +1333,10 @@ const styles = StyleSheet.create({
   input: {
     backgroundColor: "rgba(30, 26, 50, 0.98)",
     color: "#f3e7ce",
-    borderRadius: 22,
-    padding: 18,
-    fontSize: 16,
-    marginBottom: 12,
+    borderRadius: 24,
+    padding: 16,
+    fontSize: 15,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: "rgba(104, 79, 191, 0.26)",
   },
@@ -1188,9 +1353,11 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     paddingHorizontal: 18,
     paddingVertical: 16,
-    minWidth: 110,
+    minWidth: 112,
     borderWidth: 1,
     borderColor: "#6d4ad8",
+    alignItems: "center",
+    justifyContent: "center",
   },
   searchButtonText: {
     color: "#fff4d6",
@@ -1199,7 +1366,7 @@ const styles = StyleSheet.create({
   },
   addButton: {
     backgroundColor: "#8f63ff",
-    borderRadius: 26,
+    borderRadius: 24,
     paddingVertical: 16,
     alignItems: "center",
     marginTop: 18,
@@ -1208,7 +1375,7 @@ const styles = StyleSheet.create({
   },
   addButtonText: {
     color: "#FFFFFF",
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: "900",
   },
   searchStatusRow: {
@@ -1236,20 +1403,21 @@ const styles = StyleSheet.create({
     borderColor: "rgba(124, 58, 237, 0.24)",
   },
   selectedLabel: {
-    color: "#C3B0FF",
-    fontSize: 12,
-    fontWeight: "900",
+    color: "#A78BFA",
+    fontSize: 11,
+    fontWeight: "800",
     letterSpacing: 0.8,
     marginBottom: 6,
+    textTransform: "uppercase",
   },
   selectedTitle: {
     color: "#FFFFFF",
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: "900",
   },
   selectedArtist: {
     color: "#C7C7D1",
-    fontSize: 14,
+    fontSize: 13,
     marginTop: 4,
   },
   resultsList: {
@@ -1288,7 +1456,7 @@ const styles = StyleSheet.create({
   },
   recordCard: {
     backgroundColor: "rgba(22, 22, 34, 0.98)",
-    borderRadius: 24,
+    borderRadius: 26,
     padding: 20,
     marginBottom: 22,
     borderWidth: 1,
@@ -1300,20 +1468,26 @@ const styles = StyleSheet.create({
   },
   cardInfo: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
+    gap: 16,
   },
   cover: {
-    width: 150,
-    height: 150,
+    width: 140,
+    height: 140,
     borderRadius: 24,
     marginRight: 18,
     backgroundColor: "#312f50",
   },
   albumTitle: {
     color: "#fff4d6",
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "900",
-    lineHeight: 28,
+    lineHeight: 26,
+  },
+  purchaseText: {
+    color: "#b8af9e",
+    fontSize: 13,
+    marginTop: 6,
   },
   artistName: {
     color: "#c5b094",
@@ -1341,16 +1515,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   cardActions: {
-    alignItems: "flex-end",
-    justifyContent: "space-between",
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    alignItems: "center",
     gap: 10,
-    height: 100,
+    marginTop: 18,
   },
   foundButton: {
     backgroundColor: "#f4b747",
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    borderRadius: 24,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
     minWidth: 84,
     alignItems: "center",
     justifyContent: "center",
@@ -1358,13 +1533,13 @@ const styles = StyleSheet.create({
   foundText: {
     color: "#050509",
     fontWeight: "900",
-    fontSize: 12,
+    fontSize: 13,
   },
   removeButton: {
     backgroundColor: "#2f2a44",
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    borderRadius: 24,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
     borderWidth: 1,
     borderColor: "#463c7f",
     alignItems: "center",
@@ -1373,7 +1548,7 @@ const styles = StyleSheet.create({
   removeText: {
     color: "#d3c6a7",
     fontWeight: "700",
-    fontSize: 12,
+    fontSize: 13,
   },
   profileCard: {
     backgroundColor: "#11111A",
@@ -1642,7 +1817,7 @@ const styles = StyleSheet.create({
   detailCard: {
     backgroundColor: "rgba(18, 16, 38, 0.96)",
     borderRadius: 30,
-    padding: 22,
+    padding: 24,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.18)",
     shadowColor: "#000",
@@ -1653,29 +1828,29 @@ const styles = StyleSheet.create({
   detailCover: {
     width: "100%",
     height: 280,
-    borderRadius: 28,
-    marginBottom: 18,
+    borderRadius: 30,
+    marginBottom: 20,
     backgroundColor: "#272738",
   },
   detailTitle: {
     color: "#fff4d6",
-    fontSize: 26,
+    fontSize: 28,
     fontWeight: "900",
-    marginBottom: 8,
+    marginBottom: 6,
   },
   detailArtist: {
     color: "#c8b294",
-    fontSize: 16,
-    marginBottom: 16,
+    fontSize: 15,
+    marginBottom: 18,
   },
   detailInfoRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 12,
+    marginBottom: 14,
   },
   detailInfoLabel: {
     color: "#a7a1bd",
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
   },
   detailInfoValue: {
@@ -1700,16 +1875,17 @@ const styles = StyleSheet.create({
   },
   editButton: {
     backgroundColor: "rgba(124, 58, 237, 0.16)",
-    borderRadius: 20,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    borderRadius: 24,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
     borderWidth: 1,
     borderColor: "#845ef7",
+    alignItems: "center",
   },
   editButtonText: {
     color: "#d4c0ff",
     fontWeight: "700",
-    fontSize: 12,
+    fontSize: 14,
   },
   notesInput: {
     backgroundColor: "rgba(29, 26, 47, 0.96)",
@@ -1726,10 +1902,91 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 22,
   },
+  journalCard: {
+    backgroundColor: "rgba(24, 22, 45, 0.96)",
+    borderRadius: 24,
+    padding: 18,
+    marginTop: 18,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.22)",
+  },
+  journalHeader: {
+    color: "#fff4d6",
+    fontSize: 16,
+    fontWeight: "900",
+    marginBottom: 18,
+  },
+  journalField: {
+    marginBottom: 18,
+  },
+  journalLabel: {
+    color: "#A7A7B3",
+    fontSize: 12,
+    fontWeight: "700",
+    marginBottom: 8,
+    letterSpacing: 0.4,
+  },
+  journalInput: {
+    backgroundColor: "rgba(29, 26, 47, 0.96)",
+    color: "#f3e7ce",
+    borderRadius: 24,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.24)",
+  },
+  journalValue: {
+    color: "#d3c9b1",
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  columnRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 16,
+  },
+  journalHalfField: {
+    flex: 1,
+  },
+  ratingRow: {
+    marginTop: 14,
+  },
+  starsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+  },
+  starButton: {
+    padding: 6,
+  },
+  starText: {
+    fontSize: 22,
+  },
+  starActive: {
+    color: "#FBBF24",
+  },
+  starInactive: {
+    color: "#6B7280",
+  },
+  detailFooterRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+    marginTop: 18,
+  },
+  journalStoryInput: {
+    minHeight: 140,
+    textAlignVertical: "top",
+    borderRadius: 24,
+    padding: 16,
+    color: "#f3e7ce",
+    backgroundColor: "rgba(29, 26, 47, 0.96)",
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.24)",
+  },
   journalStoryText: {
     color: "#e7d7ff",
     fontSize: 15,
-    lineHeight: 24,
+    lineHeight: 26,
   },
   saveButton: {
     backgroundColor: "#7c3aed",
@@ -1756,10 +2013,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     borderWidth: 1,
     borderColor: "#463c7f",
+    alignItems: "center",
+    justifyContent: "center",
   },
   deleteButtonText: {
     color: "#d3c6a7",
     fontWeight: "700",
+    fontSize: 14,
   },
   nav: {
     position: "absolute",
@@ -1767,7 +2027,7 @@ const styles = StyleSheet.create({
     right: 16,
     bottom: 16,
     height: 84,
-    backgroundColor: "rgba(25, 19, 46, 0.96)",
+    backgroundColor: "rgba(25, 19, 46, 0.98)",
     borderRadius: 32,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.22)",
@@ -1778,16 +2038,16 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.30,
     shadowRadius: 24,
     elevation: 18,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
   },
   navItem: {
     alignItems: "center",
     justifyContent: "center",
     gap: 4,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 22,
-    minWidth: 56,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderRadius: 24,
+    minWidth: 60,
   },
   navDot: {
     width: 6,
@@ -1800,7 +2060,7 @@ const styles = StyleSheet.create({
   },
   navText: {
     color: "#9a93a8",
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "800",
   },
   navTextActive: {
