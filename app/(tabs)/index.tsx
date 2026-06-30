@@ -26,7 +26,6 @@ import { RecordListScreen } from "../../screens/CollectionScreen";
 import { WishlistScreen } from "../../screens/WishlistScreen";
 import { AlbumDetailScreen } from "../../screens/AlbumDetailScreen";
 import { ProfileScreen } from "../../screens/ProfileScreen";
-import { StoreFinderScreen } from "../../screens/StoreFinderScreen";
 import { StoreDetailScreen } from "../../screens/StoreDetailScreen";
 import { HomeScreen } from "../../screens/HomeScreen";
 import { ConfirmPurchaseDetailsModal } from "../../components/ConfirmPurchaseDetailsModal";
@@ -38,6 +37,7 @@ import { BottomNavigation } from "../../components/BottomNavigation";
 import { Toast } from "../../components/Toast";
 import { useAuth } from "../../providers/AuthProvider";
 import { isSupabaseDataModeEnabled } from "../../constants/data-mode";
+import { discoverNearbyStores, type StoreDiscoveryResult } from "../../hooks/store-discovery";
 
 const starterRecords: RecordItem[] = [
   {
@@ -61,7 +61,7 @@ const starterRecords: RecordItem[] = [
   },
 ];
 
-const recordStores: StoreItem[] = [
+const sampleRecordStores: StoreItem[] = [
   {
     id: "needham-vinyl",
     name: "Needham Vinyl Exchange",
@@ -103,6 +103,8 @@ const recordStores: StoreItem[] = [
     description: "Bright shop with new and used vinyl, plus a small listening room for previewing stacks.",
   },
 ];
+
+const STORES_UI_TIMEOUT_MS = 12000;
 
 // ═════════════════════════════════════════════════════════════════════════
 // TODO: ACCOUNTS PHASE – Authentication Integration Points
@@ -167,6 +169,10 @@ export default function App() {
   const [isEditingRecord, setIsEditingRecord] = useState(false);
   const [recordDraft, setRecordDraft] = useState<Partial<RecordItem>>({});
   const [storeCheckIns, setStoreCheckIns] = useState<Record<string, number>>({});
+  const [stores, setStores] = useState<StoreItem[]>(sampleRecordStores);
+  const [storesMessage, setStoresMessage] = useState("");
+  const [isLoadingStores, setIsLoadingStores] = useState(false);
+  const [hasLoadedStores, setHasLoadedStores] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [showPurchaseModal, setShowPurchaseModal] = useState(false);
   const [recordBeingPromoted, setRecordBeingPromoted] = useState<RecordItem | null>(null);
@@ -243,6 +249,66 @@ export default function App() {
     // (Also triggers background cloud sync in saveRecordQuestState)
     saveRecordQuestState({ records, wishlist, activity, storeCheckIns });
   }, [records, wishlist, activity, storeCheckIns, loaded]);
+
+  useEffect(() => {
+    if (screen !== "Stores" || detailStore) return;
+    if (hasLoadedStores) return;
+
+    let isMounted = true;
+
+    async function loadNearbyStores() {
+      console.log("[RecordQuest][stores] loading started");
+      setIsLoadingStores(true);
+
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      let result: StoreDiscoveryResult = {
+        stores: sampleRecordStores,
+        notice: "No nearby record stores found — showing sample stores.",
+        usingFallback: true,
+      };
+
+      try {
+        result = await Promise.race([
+          discoverNearbyStores(sampleRecordStores),
+          new Promise<StoreDiscoveryResult>((resolve) => {
+            timeoutId = setTimeout(() => {
+              resolve({
+                stores: sampleRecordStores,
+                notice: "No nearby record stores found — showing sample stores.",
+                usingFallback: true,
+              });
+            }, STORES_UI_TIMEOUT_MS);
+          }),
+        ]);
+      } catch {
+        result = {
+          stores: sampleRecordStores,
+          notice: "Showing sample stores (could not load nearby stores)",
+          usingFallback: true,
+        };
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+
+        if (!isMounted) return;
+
+        setStores(result.stores);
+        setStoresMessage(result.notice);
+        setHasLoadedStores(true);
+        setIsLoadingStores(false);
+        console.log("[RecordQuest][stores] loading ended", {
+          usingFallback: result.usingFallback,
+        });
+      }
+    }
+
+    loadNearbyStores();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [screen, detailStore, hasLoadedStores]);
 
   // Cleanup success message timer on unmount
   useEffect(() => {
@@ -629,14 +695,21 @@ export default function App() {
       {screen === "Stores" && !detailStore && (
         <ScrollView contentContainerStyle={styles.page}>
           <TopBar title="Find Stores" back={() => setScreen("Home")} />
-          <Text style={styles.screenSubtitle}>Local record stores around Needham</Text>
-          {recordStores.length === 0 ? (
+          <Text style={styles.screenSubtitle}>Nearby record stores and music shops</Text>
+          {isLoadingStores ? (
+            <View style={styles.storeLoadingRow}>
+              <ActivityIndicator size="small" color="#A78BFA" />
+              <Text style={styles.storeStatusText}>Finding nearby stores...</Text>
+            </View>
+          ) : null}
+          {storesMessage ? <Text style={styles.storeStatusText}>{storesMessage}</Text> : null}
+          {stores.length === 0 ? (
             <View style={styles.emptyFeatureCard}>
               <Text style={styles.emptyFeatureTitle}>No stores found</Text>
               <Text style={styles.emptyFeatureText}>Try adjusting your location</Text>
             </View>
           ) : (
-            recordStores.map((store) => (
+            stores.map((store) => (
               <View key={store.id} style={styles.storeCard}>
                 <View style={styles.storeHeader}>
                   <View style={{ flex: 1 }}>
@@ -1190,6 +1263,18 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 14,
     marginBottom: 16,
+  },
+  storeLoadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 8,
+  },
+  storeStatusText: {
+    color: "#C7C7D1",
+    fontSize: 12,
+    marginBottom: 8,
+    fontWeight: "500",
   },
   storeMetaText: {
     color: "#c8bda7",
