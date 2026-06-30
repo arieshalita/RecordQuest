@@ -1,5 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { isSupabaseDataModeEnabled } from "../constants/data-mode";
+import {
+  isSupabaseDataModeEnabled,
+  RECORDQUEST_DATA_MODE,
+} from "../constants/data-mode";
 import { getCurrentSession } from "./supabase-client";
 import {
   ensureUserProfile,
@@ -52,7 +55,9 @@ export const STORE_CHECKINS_KEY = "recordquest_store_checkins";
 async function getAuthenticatedUserId(): Promise<string | null> {
   try {
     const session = await getCurrentSession();
-    return session?.user?.id ?? null;
+    const userId = session?.user?.id ?? null;
+    console.log("[RecordQuest][storage] current user id:", userId ?? "none");
+    return userId;
   } catch (error) {
     console.warn("Unable to resolve current user for data mode:", error);
     return null;
@@ -96,9 +101,11 @@ async function saveLocalState(state: RecordQuestState): Promise<void> {
 
 export async function loadRecordQuestState(initialState: RecordQuestState) {
   try {
+    console.log("[RecordQuest][storage] data mode:", RECORDQUEST_DATA_MODE);
     const userId = await getAuthenticatedUserId();
 
     if (isSupabaseDataModeEnabled() && userId) {
+      console.log("[RecordQuest][storage] loading state from Supabase for user:", userId);
       const [records, wishlist, activity, storeCheckIns] = await Promise.all([
         loadRecords(userId),
         loadWishlist(userId),
@@ -123,6 +130,7 @@ export async function loadRecordQuestState(initialState: RecordQuestState) {
       } satisfies RecordQuestState;
     }
 
+    console.log("[RecordQuest][storage] loading state from AsyncStorage fallback");
     return await loadLocalState(initialState);
   } catch (error) {
     console.warn("Error loading saved data:", error);
@@ -132,23 +140,36 @@ export async function loadRecordQuestState(initialState: RecordQuestState) {
 
 export async function saveRecordQuestState(state: RecordQuestState) {
   try {
+    console.log("[RecordQuest][storage] saveRecordQuestState called", {
+      records: state.records.length,
+      wishlist: state.wishlist.length,
+      activity: state.activity.length,
+      storeCheckIns: Object.keys(state.storeCheckIns).length,
+    });
+    console.log("[RecordQuest][storage] data mode:", RECORDQUEST_DATA_MODE);
     await saveLocalState(state);
+    console.log("[RecordQuest][storage] AsyncStorage cache save complete");
 
     if (!isSupabaseDataModeEnabled()) {
+      console.log("[RecordQuest][storage] skipping Supabase save because mode is async-storage");
       return;
     }
 
     const userId = await getAuthenticatedUserId();
     if (!userId) {
+      console.warn("[RecordQuest][storage] skipping Supabase save because no authenticated user id is available");
       return;
     }
 
+    console.log("[RecordQuest][storage] saving state to Supabase for user:", userId);
     await Promise.all([
       saveRecords(userId, state.records),
       saveWishlist(userId, state.wishlist),
       saveActivity(userId, state.activity),
       saveStoreCheckins(userId, state.storeCheckIns),
     ]);
+
+    console.log("[RecordQuest][storage] Supabase save completed successfully");
   } catch (error) {
     console.warn("Error saving data:", error);
   }

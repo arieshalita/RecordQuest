@@ -263,6 +263,22 @@ export default function App() {
   }
 
   async function addRecord(toWishlist: boolean) {
+    console.log("[RecordQuest][ui] Add Record pressed", {
+      toWishlist,
+      album,
+      artist,
+      purchasedAt,
+      selectedMetadata: selectedMetadata
+        ? {
+            id: selectedMetadata.id,
+            album: selectedMetadata.album,
+            artist: selectedMetadata.artist,
+            year: selectedMetadata.year,
+            genre: selectedMetadata.genre,
+          }
+        : null,
+    });
+
     const trimmedAlbum = album.trim();
     const trimmedArtist = artist.trim();
     
@@ -304,6 +320,13 @@ export default function App() {
       setActivity([`Added ${newItem.album} to collection`, ...activity]);
       showSuccess(`✓ Added to Collection`);
     }
+
+    console.log("[RecordQuest][ui] Add Record queued state update", {
+      target: toWishlist ? "wishlist" : "records",
+      recordId: newItem.id,
+      album: newItem.album,
+      artist: newItem.artist,
+    });
 
     setAlbum("");
     setArtist("");
