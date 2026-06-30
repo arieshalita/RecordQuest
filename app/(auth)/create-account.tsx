@@ -49,7 +49,7 @@ export default function CreateAccountScreen() {
     }
 
     if (result.session) {
-      router.replace("/");
+      router.replace("/(tabs)");
       return;
     }
 

@@ -6,6 +6,7 @@ import {
   useState,
   type PropsWithChildren,
 } from "react";
+import { router } from "expo-router";
 import type { Session, User } from "@supabase/supabase-js";
 import {
   getCurrentSession,
@@ -50,6 +51,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
     restoreSession();
 
     const unsubscribe = onAuthStateChange((authenticated, authUser) => {
+      console.log("[RecordQuest][auth] auth state changed", {
+        authenticated,
+        userId: authUser?.id ?? null,
+      });
       setUser(authenticated ? authUser : null);
 
       if (!authenticated) {
@@ -89,11 +94,17 @@ export function AuthProvider({ children }: PropsWithChildren) {
         return result;
       },
       signOut: async () => {
+        console.log("[RecordQuest][auth] signOut action called");
         const result = await supabaseSignOut();
+        console.log("[RecordQuest][auth] Supabase signOut result", {
+          success: result.success,
+          error: result.error ?? null,
+        });
 
         if (result.success) {
           setSession(null);
           setUser(null);
+          router.replace("/(auth)/sign-in");
         }
 
         return result;

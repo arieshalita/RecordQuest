@@ -1,10 +1,11 @@
 import React from "react";
-import { ScrollView, Text, View, StyleSheet } from "react-native";
+import { ScrollView, Text, View, StyleSheet, Pressable } from "react-native";
 import { TopBar } from "../components/TopBar";
 import { StatCard } from "../components/StatCard";
 import { AnalyticsCard } from "../components/AnalyticsCard";
 import { AnalyticsSectionHeader } from "../components/AnalyticsSectionHeader";
 import { AchievementBadgeCard } from "../components/AchievementBadgeCard";
+import { useAuth } from "../providers/AuthProvider";
 import type { RecordItem, AchievementCategory, CollectionAnalytics } from "../hooks/types";
 import { calculateCollectionAnalytics } from "../utils/analytics";
 
@@ -85,6 +86,7 @@ export function ProfileScreen({
   storeCheckIns,
   onBack,
 }: ProfileScreenProps) {
+  const { signOut } = useAuth();
   const analytics = calculateCollectionAnalytics(records, wishlist, storeCheckIns, activity);
 
   return (
@@ -135,6 +137,21 @@ export function ProfileScreen({
           </View>
         ))
       )}
+
+      <View style={styles.signOutSection}>
+        <Pressable
+          style={styles.signOutButton}
+          onPressIn={() => {
+            console.log("[RecordQuest][profile] Sign Out pressed");
+          }}
+          onPress={() => {
+            void signOut();
+          }}
+          hitSlop={8}
+        >
+          <Text style={styles.signOutButtonText}>Sign Out</Text>
+        </Pressable>
+      </View>
     </ScrollView>
   );
 }
@@ -142,7 +159,7 @@ export function ProfileScreen({
 const styles = StyleSheet.create({
   page: {
     padding: 26,
-    paddingBottom: 130,
+    paddingBottom: 220,
   },
   profileCard: {
     backgroundColor: "#1A1830",
@@ -255,5 +272,24 @@ const styles = StyleSheet.create({
   activityText: {
     color: "#A7A1BD",
     fontSize: 13,
+  },
+  signOutSection: {
+    marginTop: 36,
+    marginBottom: 36,
+    alignItems: "center",
+  },
+  signOutButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(167, 161, 189, 0.22)",
+    backgroundColor: "rgba(26, 24, 48, 0.7)",
+  },
+  signOutButtonText: {
+    color: "#C4BEE0",
+    fontSize: 13,
+    fontWeight: "600",
+    letterSpacing: 0.2,
   },
 });
