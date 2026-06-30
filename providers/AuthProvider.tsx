@@ -51,10 +51,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
     restoreSession();
 
     const unsubscribe = onAuthStateChange((authenticated, authUser) => {
-      console.log("[RecordQuest][auth] auth state changed", {
-        authenticated,
-        userId: authUser?.id ?? null,
-      });
       setUser(authenticated ? authUser : null);
 
       if (!authenticated) {
@@ -76,6 +72,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
       signIn: async (email: string, password: string) => {
         const result = await signInWithEmail(email, password);
 
+        if (!result.success) {
+          console.warn("[RecordQuest][auth] signIn failed:", result.error ?? "unknown error");
+        }
+
         if (result.success) {
           setSession(result.session ?? null);
           setUser(result.user ?? null);
@@ -86,6 +86,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
       signUp: async (email: string, password: string) => {
         const result = await signUpWithEmail(email, password);
 
+        if (!result.success) {
+          console.warn("[RecordQuest][auth] signUp failed:", result.error ?? "unknown error");
+        }
+
         if (result.success) {
           setSession(result.session ?? null);
           setUser(result.user ?? null);
@@ -94,12 +98,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
         return result;
       },
       signOut: async () => {
-        console.log("[RecordQuest][auth] signOut action called");
         const result = await supabaseSignOut();
-        console.log("[RecordQuest][auth] Supabase signOut result", {
-          success: result.success,
-          error: result.error ?? null,
-        });
+
+        if (!result.success) {
+          console.warn("[RecordQuest][auth] signOut failed:", result.error ?? "unknown error");
+        }
 
         if (result.success) {
           setSession(null);

@@ -141,9 +141,6 @@ export function ProfileScreen({
       <View style={styles.signOutSection}>
         <Pressable
           style={styles.signOutButton}
-          onPressIn={() => {
-            console.log("[RecordQuest][profile] Sign Out pressed");
-          }}
           onPress={() => {
             void signOut();
           }}
