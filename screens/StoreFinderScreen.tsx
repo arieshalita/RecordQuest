@@ -118,18 +118,20 @@ const styles = StyleSheet.create({
   },
   storeButtonsRow: {
     flexDirection: "row",
-    gap: 8,
+    gap: 10,
+    flexWrap: "wrap",
   },
   storeButton: {
     flex: 1,
+    minWidth: "30%",
     backgroundColor: "#3E3B5C",
-    paddingVertical: 10,
+    paddingVertical: 11,
     borderRadius: 6,
     alignItems: "center",
   },
   storeButtonText: {
     color: "#A7A1BD",
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "600",
   },
   viewStoreButton: {

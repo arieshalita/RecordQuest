@@ -102,6 +102,47 @@ const recordStores: StoreItem[] = [
   },
 ];
 
+// ═════════════════════════════════════════════════════════════════════════
+// TODO: ACCOUNTS PHASE – Authentication Integration Points
+// ═════════════════════════════════════════════════════════════════════════
+// Current Architecture: Single local user, all data in AsyncStorage
+// 
+// After Supabase Setup (Phase 2.1):
+// 1. Wrap App in AuthProvider (Supabase Auth context)
+//    <AuthProvider>
+//      <App />
+//    </AuthProvider>
+//
+// 2. Check user authentication state on app load:
+//    - If authenticated: Load user's cloud data
+//    - If not authenticated: Show login screen
+//    - If offline: Use cached AsyncStorage data
+//
+// 3. User context will include:
+//    - userId: string (from Supabase Auth)
+//    - email: string
+//    - isAuthenticated: boolean
+//    - isLoading: boolean
+//    - logout: () => void
+//
+// 4. Data loading flow becomes:
+//    useEffect(() => {
+//      if (isAuthenticated) {
+//        // Load from Supabase + sync with local
+//        const state = await loadRecordQuestState(initialState);
+//      } else {
+//        // Load from local AsyncStorage only
+//        const state = await loadRecordQuestState(initialState);
+//      }
+//    }, [isAuthenticated]);
+//
+// 5. Data saving flow becomes:
+//    - Save to AsyncStorage (offline support)
+//    - If authenticated: Sync to Supabase in background
+//
+// See: hooks/recordquest-storage.ts for detailed sync comments
+// ═════════════════════════════════════════════════════════════════════════
+
 export default function App() {
   const [screen, setScreen] = useState("Home");
   const [records, setRecords] = useState<RecordItem[]>(starterRecords);
@@ -155,6 +196,13 @@ export default function App() {
         storeCheckIns: {},
       };
 
+      // TODO: Accounts Phase – Data Loading
+      // After Supabase setup, this will conditionally load from cloud vs local:
+      // if (currentUserId) {
+      //   const savedState = await loadFromSupabase(currentUserId);
+      // } else {
+      //   const savedState = await loadRecordQuestState(initialState);
+      // }
       const savedState = await loadRecordQuestState(initialState);
 
       if (!isMounted) return;
@@ -176,6 +224,10 @@ export default function App() {
   useEffect(() => {
     if (!loaded) return;
 
+    // TODO: Accounts Phase – Data Persistence & Sync
+    // This will now also sync to Supabase if authenticated:
+    // await saveRecordQuestState({ records, wishlist, activity, storeCheckIns });
+    // (Also triggers background cloud sync in saveRecordQuestState)
     saveRecordQuestState({ records, wishlist, activity, storeCheckIns });
   }, [records, wishlist, activity, storeCheckIns, loaded]);
 
@@ -596,7 +648,7 @@ export default function App() {
 
       <View style={styles.nav}>
         <NavItem label="Home" active={screen === "Home"} onPress={() => setScreen("Home")} />
-        <NavItem label="Collection" active={screen === "Collection"} onPress={() => setScreen("Collection")} />
+        <NavItem label="Library" active={screen === "Collection"} onPress={() => setScreen("Collection")} />
         <NavItem label="Stores" active={screen === "Stores" || screen === "StoreDetail"} onPress={() => {
           setDetailStore(null);
           setScreen("Stores");
@@ -642,30 +694,31 @@ const styles = StyleSheet.create({
     backgroundColor: "#050509",
   },
   page: {
-    padding: 26,
-    paddingBottom: 130,
+    padding: 28,
+    paddingBottom: 140,
   },
   logo: {
     color: "#FFF4D6",
-    fontSize: 46,
+    fontSize: 48,
     fontWeight: "900",
     textAlign: "center",
-    marginTop: 14,
-    letterSpacing: -1.2,
+    marginTop: 16,
+    letterSpacing: -1.4,
   },
   tagline: {
     color: "#C4BEE0",
     fontSize: 17,
     textAlign: "center",
-    marginTop: 10,
-    marginBottom: 28,
-    lineHeight: 24,
+    marginTop: 12,
+    marginBottom: 32,
+    lineHeight: 25,
+    fontWeight: "500",
   },
   hero: {
     backgroundColor: "#120f22",
-    borderRadius: 28,
-    padding: 32,
-    marginBottom: 26,
+    borderRadius: 30,
+    padding: 34,
+    marginBottom: 36,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.22)",
     shadowColor: "#000",
@@ -687,32 +740,33 @@ const styles = StyleSheet.create({
     color: "#d5b9ff",
     fontSize: 12,
     fontWeight: "900",
-    letterSpacing: 1.5,
-    marginBottom: 12,
+    letterSpacing: 1.6,
+    marginBottom: 14,
   },
   heroTitle: {
     color: "#fff4d6",
-    fontSize: 34,
+    fontSize: 35,
     fontWeight: "900",
-    lineHeight: 42,
-    marginBottom: 14,
+    lineHeight: 44,
+    marginBottom: 16,
   },
   heroText: {
     color: "#d6c2a1",
-    fontSize: 17,
-    lineHeight: 28,
+    fontSize: 16,
+    lineHeight: 27,
     maxWidth: "96%",
+    fontWeight: "500",
   },
   statsRow: {
     flexDirection: "row",
-    gap: 14,
-    marginBottom: 28,
+    gap: 16,
+    marginBottom: 36,
   },
   statCard: {
     flex: 1,
     backgroundColor: "rgba(20, 18, 40, 0.98)",
-    borderRadius: 24,
-    padding: 20,
+    borderRadius: 26,
+    padding: 22,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.22)",
     shadowColor: "#000",
@@ -722,28 +776,30 @@ const styles = StyleSheet.create({
   },
   statValue: {
     color: "#F59E0B",
-    fontSize: 32,
+    fontSize: 34,
     fontWeight: "900",
-    lineHeight: 38,
+    lineHeight: 40,
   },
   statLabel: {
     color: "#C7C7D1",
-    fontSize: 12,
-    fontWeight: "600",
-    marginTop: 8,
+    fontSize: 13,
+    fontWeight: "700",
+    marginTop: 10,
+    letterSpacing: 0.3,
   },
   sectionTitle: {
     color: "#FFF4D6",
-    fontSize: 22,
+    fontSize: 23,
     fontWeight: "900",
-    marginBottom: 14,
-    marginTop: 12,
+    marginBottom: 22,
+    marginTop: 20,
+    letterSpacing: 0.2,
   },
   homeCard: {
     backgroundColor: "rgba(24, 23, 46, 0.96)",
     borderRadius: 28,
-    padding: 24,
-    marginBottom: 18,
+    padding: 26,
+    marginBottom: 26,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.28)",
     flexDirection: "row",
@@ -802,15 +858,15 @@ const styles = StyleSheet.create({
   screenSubtitle: {
     color: "#C4BEE0",
     fontSize: 15,
-    fontWeight: "700",
-    marginBottom: 20,
-    lineHeight: 22,
+    fontWeight: "600",
+    marginBottom: 22,
+    lineHeight: 23,
   },
   addPanel: {
     backgroundColor: "rgba(20, 18, 38, 0.96)",
-    borderRadius: 26,
-    padding: 24,
-    marginBottom: 24,
+    borderRadius: 28,
+    padding: 26,
+    marginBottom: 26,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.20)",
     shadowColor: "#000",
@@ -821,16 +877,17 @@ const styles = StyleSheet.create({
   input: {
     backgroundColor: "rgba(30, 26, 50, 0.98)",
     color: "#f3e7ce",
-    borderRadius: 24,
-    padding: 16,
+    borderRadius: 26,
+    padding: 17,
     fontSize: 15,
-    marginBottom: 14,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: "rgba(104, 79, 191, 0.26)",
+    fontWeight: "500",
   },
   searchRow: {
     flexDirection: "row",
-    gap: 12,
+    gap: 14,
     alignItems: "center",
   },
   albumInput: {
@@ -838,10 +895,10 @@ const styles = StyleSheet.create({
   },
   searchButton: {
     backgroundColor: "#8f63ff",
-    borderRadius: 24,
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-    minWidth: 112,
+    borderRadius: 26,
+    paddingHorizontal: 20,
+    paddingVertical: 17,
+    minWidth: 120,
     borderWidth: 1,
     borderColor: "#6d4ad8",
     alignItems: "center",
@@ -854,10 +911,10 @@ const styles = StyleSheet.create({
   },
   addButton: {
     backgroundColor: "#8f63ff",
-    borderRadius: 24,
-    paddingVertical: 16,
+    borderRadius: 26,
+    paddingVertical: 17,
     alignItems: "center",
-    marginTop: 18,
+    marginTop: 20,
     borderWidth: 1,
     borderColor: "#6d4ad8",
   },
@@ -865,52 +922,56 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 15,
     fontWeight: "900",
+    letterSpacing: 0.3,
   },
   searchStatusRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    marginTop: 8,
-    marginBottom: 4,
+    gap: 10,
+    marginTop: 10,
+    marginBottom: 6,
   },
   searchStatusText: {
     color: "#C7C7D1",
     fontSize: 13,
+    fontWeight: "500",
   },
   searchMessage: {
     color: "#A7A7B3",
     fontSize: 13,
-    marginBottom: 10,
+    marginBottom: 12,
+    fontWeight: "500",
   },
   selectedCard: {
     backgroundColor: "rgba(24, 22, 45, 0.96)",
-    borderRadius: 24,
-    padding: 18,
-    marginBottom: 12,
+    borderRadius: 26,
+    padding: 20,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.24)",
   },
   selectedLabel: {
     color: "#A78BFA",
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "800",
-    letterSpacing: 0.8,
-    marginBottom: 6,
+    letterSpacing: 1.0,
+    marginBottom: 8,
     textTransform: "uppercase",
   },
   selectedTitle: {
     color: "#FFFFFF",
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: "900",
   },
   selectedArtist: {
     color: "#C7C7D1",
     fontSize: 13,
-    marginTop: 4,
+    marginTop: 6,
+    fontWeight: "500",
   },
   resultsList: {
-    gap: 10,
-    marginBottom: 10,
+    gap: 12,
+    marginBottom: 12,
   },
   resultCard: {
     backgroundColor: "rgba(23, 23, 40, 0.97)",
@@ -946,9 +1007,9 @@ const styles = StyleSheet.create({
   },
   recordCard: {
     backgroundColor: "rgba(22, 22, 34, 0.98)",
-    borderRadius: 26,
-    padding: 20,
-    marginBottom: 22,
+    borderRadius: 28,
+    padding: 24,
+    marginBottom: 24,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.20)",
     shadowColor: "#000",
@@ -959,68 +1020,72 @@ const styles = StyleSheet.create({
   cardInfo: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 18,
+    gap: 20,
   },
   cover: {
-    width: 140,
-    height: 140,
-    borderRadius: 24,
-    marginRight: 20,
+    width: 150,
+    height: 150,
+    borderRadius: 26,
     backgroundColor: "#312f50",
+    flexShrink: 0,
   },
   albumTitle: {
     color: "#fff4d6",
-    fontSize: 18,
+    fontSize: 19,
     fontWeight: "900",
-    lineHeight: 26,
-    maxWidth: "88%",
+    lineHeight: 27,
+    maxWidth: "85%",
+    letterSpacing: 0.2,
   },
   purchaseText: {
     color: "#b8af9e",
-    fontSize: 13,
-    marginTop: 8,
-    maxWidth: "88%",
+    fontSize: 12,
+    marginTop: 10,
+    maxWidth: "85%",
+    fontWeight: "500",
   },
   artistName: {
     color: "#c5b094",
     fontSize: 14,
-    marginTop: 6,
-    maxWidth: "88%",
+    marginTop: 7,
+    maxWidth: "85%",
+    fontWeight: "600",
   },
   metaRow: {
     flexDirection: "row",
     gap: 12,
     alignItems: "center",
-    marginTop: 12,
+    marginTop: 14,
     marginBottom: 4,
   },
   genrePill: {
     color: "#FFFFFF",
     backgroundColor: "#7C3AED",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
     borderRadius: 999,
     overflow: "hidden",
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "800",
   },
   yearText: {
     color: "#c8bda7",
-    fontSize: 13,
+    fontSize: 12,
+    fontWeight: "600",
   },
   cardActions: {
     flexDirection: "row",
     justifyContent: "flex-end",
     alignItems: "center",
-    gap: 10,
-    marginTop: 18,
+    gap: 12,
+    marginTop: 20,
   },
   foundButton: {
     backgroundColor: "#f4b747",
-    borderRadius: 24,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    minWidth: 84,
+    borderRadius: 26,
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    minWidth: 88,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1031,9 +1096,9 @@ const styles = StyleSheet.create({
   },
   removeButton: {
     backgroundColor: "#2f2a44",
-    borderRadius: 24,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
+    borderRadius: 26,
+    paddingHorizontal: 20,
+    paddingVertical: 15,
     borderWidth: 1,
     borderColor: "#463c7f",
     alignItems: "center",
@@ -1057,9 +1122,9 @@ const styles = StyleSheet.create({
   },
   storeCard: {
     backgroundColor: "rgba(18, 16, 38, 0.98)",
-    borderRadius: 24,
-    padding: 22,
-    marginBottom: 18,
+    borderRadius: 26,
+    padding: 24,
+    marginBottom: 20,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.20)",
     shadowColor: "#000",
@@ -1071,17 +1136,19 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 10,
+    marginBottom: 12,
   },
   storeName: {
     color: "#fff4d6",
-    fontSize: 18,
+    fontSize: 19,
     fontWeight: "900",
+    letterSpacing: 0.2,
   },
   storeNeighborhood: {
     color: "#c8b294",
     fontSize: 13,
-    marginTop: 2,
+    marginTop: 3,
+    fontWeight: "500",
   },
   storeDistance: {
     color: "#c8b294",
@@ -1091,12 +1158,13 @@ const styles = StyleSheet.create({
   storeAddress: {
     color: "#d3c9b1",
     fontSize: 13,
-    marginBottom: 10,
+    marginBottom: 12,
+    fontWeight: "500",
   },
   storeMetaRow: {
     flexDirection: "row",
-    gap: 12,
-    marginBottom: 14,
+    gap: 14,
+    marginBottom: 16,
   },
   storeMetaText: {
     color: "#c8bda7",

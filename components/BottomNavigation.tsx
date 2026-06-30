@@ -12,7 +12,7 @@ export function BottomNavigation({ activeScreen, onNavigate }: BottomNavigationP
     <View style={styles.nav}>
       <NavItem label="Home" active={activeScreen === "Home"} onPress={() => onNavigate("Home")} />
       <NavItem
-        label="Collection"
+        label="Library"
         active={activeScreen === "Collection"}
         onPress={() => onNavigate("Collection")}
       />
@@ -32,12 +32,13 @@ export function BottomNavigation({ activeScreen, onNavigate }: BottomNavigationP
 const styles = StyleSheet.create({
   nav: {
     flexDirection: "row",
-    justifyContent: "space-around",
+    justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
     paddingVertical: 16,
     borderTopWidth: 1,
-    borderTopColor: "rgba(124, 58, 237, 0.10)",
+    borderTopColor: "rgba(124, 58, 237, 0.12)",
     backgroundColor: "#0a0a0f",
+    gap: 8,
   },
 });

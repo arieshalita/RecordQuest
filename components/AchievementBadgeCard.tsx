@@ -52,7 +52,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 180,
     borderWidth: 2,
-    marginBottom: 12,
+    marginBottom: 0,
   },
   badgeCardUnlocked: {
     borderColor: "rgba(212, 175, 55, 0.40)",
@@ -63,21 +63,23 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(18, 16, 38, 0.60)",
   },
   badgeEmoji: {
-    fontSize: 42,
-    marginBottom: 8,
+    fontSize: 44,
+    marginBottom: 10,
   },
   badgeEmojiUnlocked: {
-    fontSize: 42,
+    fontSize: 44,
   },
   badgeEmojiLocked: {
-    fontSize: 42,
+    fontSize: 44,
     opacity: 0.4,
   },
   badgeLabel: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: "800",
-    marginBottom: 6,
+    marginBottom: 8,
     textAlign: "center",
+    lineHeight: 15,
+    maxWidth: "90%",
   },
   badgeLabelUnlocked: {
     color: "#fff4d6",
@@ -86,10 +88,12 @@ const styles = StyleSheet.create({
     color: "#57516C",
   },
   badgeRequirement: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: "600",
     marginBottom: 8,
     textAlign: "center",
+    lineHeight: 11,
+    maxWidth: "90%",
   },
   badgeRequirementUnlocked: {
     color: "#d6c2a1",
@@ -100,7 +104,9 @@ const styles = StyleSheet.create({
   badgeProgress: {
     fontSize: 12,
     fontWeight: "700",
-    marginBottom: 4,
+    marginBottom: 6,
+    textAlign: "center",
+    lineHeight: 14,
   },
   badgeProgressUnlocked: {
     color: "#d4af37",
@@ -112,6 +118,8 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "800",
     textTransform: "uppercase",
+    lineHeight: 12,
+    marginTop: 2,
   },
   badgeStatusUnlocked: {
     color: "#d4af37",
