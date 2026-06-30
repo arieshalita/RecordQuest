@@ -1,25 +1,20 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { isSupabaseDataModeEnabled } from "../constants/data-mode";
+import { getCurrentSession } from "./supabase-client";
+import {
+  ensureUserProfile,
+  loadActivity,
+  loadRecords,
+  loadStoreCheckins,
+  loadWishlist,
+  saveActivity,
+  saveRecords,
+  saveStoreCheckins,
+  saveWishlist,
+} from "./recordquest-supabase-service";
+import type { RecordItem } from "./types";
 
-export type RecordItem = {
-  id: number;
-  album: string;
-  artist: string;
-  year: string;
-  genre: string;
-  cover: string;
-  purchasedAt?: string;
-  purchaseDate?: string;
-  condition?: string;
-  price?: string;
-  notes?: string;
-  favoriteTrack?: string;
-  rating?: number;
-  // TODO: Accounts Phase – Add userId for multi-user/cloud sync support
-  // userId?: string;
-  // TODO: Accounts Phase – Add createdAt/updatedAt for sync tracking
-  // createdAt?: string;
-  // updatedAt?: string;
-};
+export type { RecordItem };
 
 export type RecordQuestState = {
   records: RecordItem[];
@@ -54,55 +49,105 @@ export const STORE_CHECKINS_KEY = "recordquest_store_checkins";
 // export const AUTH_TOKEN_KEY = "recordquest_auth_token";
 // export const CURRENT_USER_KEY = "recordquest_current_user";
 
+async function getAuthenticatedUserId(): Promise<string | null> {
+  try {
+    const session = await getCurrentSession();
+    return session?.user?.id ?? null;
+  } catch (error) {
+    console.warn("Unable to resolve current user for data mode:", error);
+    return null;
+  }
+}
+
+async function loadLocalState(initialState: RecordQuestState): Promise<RecordQuestState> {
+  const [savedRecords, savedWishlist, savedActivity, savedCheckIns] = await Promise.all([
+    AsyncStorage.getItem(RECORDS_KEY),
+    AsyncStorage.getItem(WISHLIST_KEY),
+    AsyncStorage.getItem(ACTIVITY_KEY),
+    AsyncStorage.getItem(STORE_CHECKINS_KEY),
+  ]);
+
+  const parsedRecords = savedRecords ? (JSON.parse(savedRecords) as RecordItem[]) : null;
+  const parsedWishlist = savedWishlist ? (JSON.parse(savedWishlist) as RecordItem[]) : null;
+  const parsedActivity = savedActivity ? (JSON.parse(savedActivity) as string[]) : null;
+  const parsedCheckIns = savedCheckIns
+    ? (JSON.parse(savedCheckIns) as Record<string, number>)
+    : null;
+
+  return {
+    records: Array.isArray(parsedRecords) ? parsedRecords : initialState.records,
+    wishlist: Array.isArray(parsedWishlist) ? parsedWishlist : initialState.wishlist,
+    activity: Array.isArray(parsedActivity) ? parsedActivity : initialState.activity,
+    storeCheckIns:
+      parsedCheckIns && typeof parsedCheckIns === "object"
+        ? parsedCheckIns
+        : initialState.storeCheckIns,
+  } satisfies RecordQuestState;
+}
+
+async function saveLocalState(state: RecordQuestState): Promise<void> {
+  await Promise.all([
+    AsyncStorage.setItem(RECORDS_KEY, JSON.stringify(state.records)),
+    AsyncStorage.setItem(WISHLIST_KEY, JSON.stringify(state.wishlist)),
+    AsyncStorage.setItem(ACTIVITY_KEY, JSON.stringify(state.activity)),
+    AsyncStorage.setItem(STORE_CHECKINS_KEY, JSON.stringify(state.storeCheckIns)),
+  ]);
+}
+
 export async function loadRecordQuestState(initialState: RecordQuestState) {
   try {
-    // TODO: Accounts Phase – Add Supabase cloud sync check here
-    // When authenticated, fetch from Supabase instead of (or in addition to) AsyncStorage
-    // const userId = await getCurrentUserId(); // From Supabase Auth
-    // if (userId) {
-    //   return await loadFromSupabase(userId);
-    // }
+    const userId = await getAuthenticatedUserId();
 
-    // Current: Load from local AsyncStorage only
-    const [savedRecords, savedWishlist, savedActivity, savedCheckIns] = await Promise.all([
-      AsyncStorage.getItem(RECORDS_KEY),
-      AsyncStorage.getItem(WISHLIST_KEY),
-      AsyncStorage.getItem(ACTIVITY_KEY),
-      AsyncStorage.getItem(STORE_CHECKINS_KEY),
-    ]);
+    if (isSupabaseDataModeEnabled() && userId) {
+      const [records, wishlist, activity, storeCheckIns] = await Promise.all([
+        loadRecords(userId),
+        loadWishlist(userId),
+        loadActivity(userId),
+        loadStoreCheckins(userId),
+      ]);
 
-    const parsedRecords = savedRecords ? (JSON.parse(savedRecords) as RecordItem[]) : null;
-    const parsedWishlist = savedWishlist ? (JSON.parse(savedWishlist) as RecordItem[]) : null;
-    const parsedActivity = savedActivity ? (JSON.parse(savedActivity) as string[]) : null;
-    const parsedCheckIns = savedCheckIns ? (JSON.parse(savedCheckIns) as Record<string, number>) : null;
+      if (
+        records.length === 0 &&
+        wishlist.length === 0 &&
+        activity.length === 0 &&
+        Object.keys(storeCheckIns).length === 0
+      ) {
+        await ensureUserProfile(userId);
+      }
 
-    return {
-      records: Array.isArray(parsedRecords) ? parsedRecords : initialState.records,
-      wishlist: Array.isArray(parsedWishlist) ? parsedWishlist : initialState.wishlist,
-      activity: Array.isArray(parsedActivity) ? parsedActivity : initialState.activity,
-      storeCheckIns: parsedCheckIns && typeof parsedCheckIns === "object" ? parsedCheckIns : initialState.storeCheckIns,
-    } satisfies RecordQuestState;
+      return {
+        records,
+        wishlist,
+        activity,
+        storeCheckIns,
+      } satisfies RecordQuestState;
+    }
+
+    return await loadLocalState(initialState);
   } catch (error) {
     console.warn("Error loading saved data:", error);
-    return initialState;
+    return await loadLocalState(initialState);
   }
 }
 
 export async function saveRecordQuestState(state: RecordQuestState) {
   try {
-    // TODO: Accounts Phase – Add Supabase cloud sync here
-    // When authenticated, sync to Supabase after saving locally
-    // const userId = await getCurrentUserId(); // From Supabase Auth
-    // if (userId) {
-    //   await syncToSupabase(userId, state); // Non-blocking sync to cloud
-    // }
+    await saveLocalState(state);
 
-    // Current: Save to local AsyncStorage
+    if (!isSupabaseDataModeEnabled()) {
+      return;
+    }
+
+    const userId = await getAuthenticatedUserId();
+    if (!userId) {
+      return;
+    }
+
     await Promise.all([
-      AsyncStorage.setItem(RECORDS_KEY, JSON.stringify(state.records)),
-      AsyncStorage.setItem(WISHLIST_KEY, JSON.stringify(state.wishlist)),
-      AsyncStorage.setItem(ACTIVITY_KEY, JSON.stringify(state.activity)),
-      AsyncStorage.setItem(STORE_CHECKINS_KEY, JSON.stringify(state.storeCheckIns)),
+      saveRecords(userId, state.records),
+      saveWishlist(userId, state.wishlist),
+      saveActivity(userId, state.activity),
+      saveStoreCheckins(userId, state.storeCheckIns),
     ]);
   } catch (error) {
     console.warn("Error saving data:", error);

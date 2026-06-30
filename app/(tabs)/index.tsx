@@ -36,6 +36,8 @@ import { HomeCard } from "../../components/HomeCard";
 import { NavItem } from "../../components/NavItem";
 import { BottomNavigation } from "../../components/BottomNavigation";
 import { Toast } from "../../components/Toast";
+import { useAuth } from "../../providers/AuthProvider";
+import { isSupabaseDataModeEnabled } from "../../constants/data-mode";
 
 const starterRecords: RecordItem[] = [
   {
@@ -144,6 +146,7 @@ const recordStores: StoreItem[] = [
 // ═════════════════════════════════════════════════════════════════════════
 
 export default function App() {
+  const { user } = useAuth();
   const [screen, setScreen] = useState("Home");
   const [records, setRecords] = useState<RecordItem[]>(starterRecords);
   const [wishlist, setWishlist] = useState<RecordItem[]>([]);
@@ -173,6 +176,7 @@ export default function App() {
   const [purchasedAtDetail, setPurchasedAtDetail] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [successMessageTimer, setSuccessMessageTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const didHydrateRef = useRef(false);
 
   const achievementCategories = calculateAchievementCategories(records, wishlist, storeCheckIns, activity);
   const unlockedBadgeCount = achievementCategories
@@ -186,13 +190,16 @@ export default function App() {
     let isMounted = true;
 
     async function loadData() {
+      const shouldUseCloudData = isSupabaseDataModeEnabled() && !!user;
       const initialState = {
-        records: starterRecords,
+        records: shouldUseCloudData ? [] : starterRecords,
         wishlist: [],
-        activity: [
-          "Added Random Access Memories",
-          "Started your RecordQuest collection",
-        ],
+        activity: shouldUseCloudData
+          ? []
+          : [
+              "Added Random Access Memories",
+              "Started your RecordQuest collection",
+            ],
         storeCheckIns: {},
       };
 
@@ -211,6 +218,7 @@ export default function App() {
       setWishlist(savedState.wishlist);
       setActivity(savedState.activity);
       setStoreCheckIns(savedState.storeCheckIns);
+      didHydrateRef.current = false;
       setLoaded(true);
     }
 
@@ -219,10 +227,15 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (!loaded) return;
+
+    if (!didHydrateRef.current) {
+      didHydrateRef.current = true;
+      return;
+    }
 
     // TODO: Accounts Phase – Data Persistence & Sync
     // This will now also sync to Supabase if authenticated:
@@ -467,6 +480,18 @@ export default function App() {
     setIsEditingRecord(false);
     setRecordDraft({});
     setScreen(targetScreen);
+  }
+
+  if (!loaded) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" />
+        <View style={styles.cloudLoadingContainer}>
+          <ActivityIndicator size="large" color="#A78BFA" />
+          <Text style={styles.cloudLoadingText}>Loading your collection...</Text>
+        </View>
+      </SafeAreaView>
+    );
   }
 
   return (
@@ -1820,5 +1845,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     textAlign: "center",
+  },
+  cloudLoadingContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 14,
+  },
+  cloudLoadingText: {
+    color: "#C4BEE0",
+    fontSize: 16,
+    fontWeight: "600",
   },
 });
