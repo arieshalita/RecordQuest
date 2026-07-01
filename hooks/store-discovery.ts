@@ -21,6 +21,18 @@ type OverpassResponse = {
 type RankedStore = StoreItem & {
   _distanceMiles: number;
   _score: number;
+  _confidence: "high" | "medium" | "low";
+};
+
+type CuratedStoreSeed = {
+  id: string;
+  name: string;
+  neighborhood: string;
+  address: string;
+  hours: string;
+  description: string;
+  latitude: number;
+  longitude: number;
 };
 
 export type StoreDiscoveryResult = {
@@ -33,6 +45,89 @@ const OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter";
 const SEARCH_RADIUS_METERS = 48280;
 const REQUEST_TIMEOUT_MS = 12000;
 const MAX_RESULTS = 15;
+
+const CURATED_BOSTON_STORES: CuratedStoreSeed[] = [
+  {
+    id: "newbury-comics-newbury",
+    name: "Newbury Comics",
+    neighborhood: "Back Bay",
+    address: "332 Newbury St, Boston, MA 02115",
+    hours: "Hours vary",
+    description: "Long-running Boston music and pop-culture shop with a strong vinyl section.",
+    latitude: 42.3496,
+    longitude: -71.0875,
+  },
+  {
+    id: "armageddon-harvard-square",
+    name: "Armageddon Shop",
+    neighborhood: "Harvard Square",
+    address: "22 Eliot St, Cambridge, MA 02138",
+    hours: "Hours vary",
+    description: "Independent record shop known for punk, metal, indie, and underground titles.",
+    latitude: 42.3724,
+    longitude: -71.1211,
+  },
+  {
+    id: "in-your-ear-allston",
+    name: "In Your Ear Records",
+    neighborhood: "Allston",
+    address: "957 Commonwealth Ave, Boston, MA 02215",
+    hours: "Hours vary",
+    description: "Classic Boston used record store with deep crates across many genres.",
+    latitude: 42.3502,
+    longitude: -71.1172,
+  },
+  {
+    id: "stereo-jacks-ball-square",
+    name: "Stereo Jack's",
+    neighborhood: "Ball Square",
+    address: "744 Broadway, Somerville, MA 02144",
+    hours: "Hours vary",
+    description: "Neighborhood vinyl spot with curated used and new records.",
+    latitude: 42.4017,
+    longitude: -71.1108,
+  },
+  {
+    id: "deep-thoughts-jp",
+    name: "Deep Thoughts JP",
+    neighborhood: "Jamaica Plain",
+    address: "31A South St, Jamaica Plain, MA 02130",
+    hours: "Hours vary",
+    description: "JP shop focused on eclectic used vinyl and local discoveries.",
+    latitude: 42.3154,
+    longitude: -71.1148,
+  },
+  {
+    id: "village-vinyl-coolidge",
+    name: "Village Vinyl & Hi-Fi",
+    neighborhood: "Coolidge Corner",
+    address: "434 Harvard St, Brookline, MA 02446",
+    hours: "Hours vary",
+    description: "Brookline record and hi-fi destination with a broad vinyl selection.",
+    latitude: 42.3427,
+    longitude: -71.1222,
+  },
+  {
+    id: "wanna-hear-it-watertown",
+    name: "Wanna Hear It Records",
+    neighborhood: "Watertown Square",
+    address: "117 Church St, Watertown, MA 02472",
+    hours: "Hours vary",
+    description: "Independent shop with punk, hardcore, and collectible records.",
+    latitude: 42.3708,
+    longitude: -71.1829,
+  },
+  {
+    id: "nuggets-kenmore",
+    name: "Nuggets Record Shop",
+    neighborhood: "Kenmore / Fenway",
+    address: "486 Commonwealth Ave, Boston, MA 02215",
+    hours: "Hours vary",
+    description: "Beloved local record store with a strong used selection.",
+    latitude: 42.3494,
+    longitude: -71.0989,
+  },
+];
 
 function metersToMiles(meters: number): number {
   return meters * 0.000621371;
@@ -60,6 +155,73 @@ function formatDistanceMiles(distanceMiles: number): string {
   if (!Number.isFinite(distanceMiles)) return "-";
   if (distanceMiles < 0.1) return "0.1 mi";
   return `${distanceMiles.toFixed(1)} mi`;
+}
+
+function normalizeStoreDedupKey(name: string, address: string): string {
+  const normalizedName = name.trim().toLowerCase().replace(/\s+/g, " ");
+  const normalizedAddress = address.trim().toLowerCase().replace(/\s+/g, " ");
+  return `${normalizedName}::${normalizedAddress}`;
+}
+
+function mergeCuratedWithSupplemental(curated: StoreItem[], supplemental: StoreItem[]): StoreItem[] {
+  const seen = new Set<string>();
+
+  const merged: StoreItem[] = [];
+
+  for (const store of curated) {
+    const key = normalizeStoreDedupKey(store.name, store.address);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(store);
+  }
+
+  for (const store of supplemental) {
+    const key = normalizeStoreDedupKey(store.name, store.address);
+    if (seen.has(key)) {
+      console.log("[RecordQuest][stores] rejected result:", {
+        name: store.name,
+        reason: "duplicate of curated or previous result",
+      });
+      continue;
+    }
+    seen.add(key);
+    merged.push(store);
+  }
+
+  return merged.slice(0, MAX_RESULTS);
+}
+
+function buildCuratedFallbackStores(latitude?: number, longitude?: number): StoreItem[] {
+  const hasLocation = typeof latitude === "number" && typeof longitude === "number";
+
+  const mapped = CURATED_BOSTON_STORES.map((store) => {
+    const distanceMiles = hasLocation
+      ? haversineDistanceMiles(latitude, longitude, store.latitude, store.longitude)
+      : Number.NaN;
+
+    return {
+      id: store.id,
+      name: store.name,
+      neighborhood: store.neighborhood,
+      address: store.address,
+      rating: "—",
+      distance: hasLocation ? formatDistanceMiles(distanceMiles) : "Boston area",
+      hours: store.hours,
+      description: store.description,
+      _distanceMiles: distanceMiles,
+    };
+  });
+
+  return mapped
+    .sort((a, b) => {
+      if (!Number.isFinite(a._distanceMiles) || !Number.isFinite(b._distanceMiles)) return 0;
+      return a._distanceMiles - b._distanceMiles;
+    })
+    .map(({ _distanceMiles, ...store }) => store);
+}
+
+export function getCuratedFallbackStores(): StoreItem[] {
+  return buildCuratedFallbackStores();
 }
 
 function pickNeighborhood(tags: Record<string, string | undefined>): string {
@@ -114,31 +276,91 @@ function normalizeText(value: string | undefined): string {
   return (value ?? "").toLowerCase();
 }
 
-function rankStoreCandidate(tags: Record<string, string | undefined>): number {
+function getTagText(tags: Record<string, string | undefined>): string {
+  return Object.entries(tags)
+    .map(([key, value]) => `${key}:${value ?? ""}`)
+    .join(" ")
+    .toLowerCase();
+}
+
+function classifyStoreCandidate(
+  tags: Record<string, string | undefined>
+): { score: number; confidence: "high" | "medium" | "low"; rejectReason?: string } {
   const shop = normalizeText(tags.shop);
   const name = normalizeText(tags.name);
   const description = normalizeText(tags.description);
-  const combined = `${name} ${description} ${shop}`;
+  const amenity = normalizeText(tags.amenity);
+  const tourism = normalizeText(tags.tourism);
+  const leisure = normalizeText(tags.leisure);
+  const office = normalizeText(tags.office);
+  const craft = normalizeText(tags.craft);
+  const tagText = getTagText(tags);
 
-  const hasRecordOrVinyl = /\brecords?\b|\bvinyl\b/.test(combined);
-  const hasMusic = /\bmusic\b/.test(combined);
+  const nameHasRecordSignals = /\brecords?\b|\bvinyl\b|\blp\b|record\s+shop|record\s+store/.test(name);
+  const descHasRecordSignals = /\brecords?\b|\bvinyl\b|\blp\b|record\s+shop|record\s+store/.test(description);
+  const tagHasRecordSignals = /\brecords?\b|\bvinyl\b|\blp\b|record\s+shop|record\s+store/.test(tagText);
 
-  const isStrong = hasRecordOrVinyl;
-  const isGood = shop === "music";
-  const isWeak = (shop === "books" || shop === "second_hand") && (hasRecordOrVinyl || hasMusic);
+  const hasRecordSignals = nameHasRecordSignals || descHasRecordSignals || tagHasRecordSignals;
 
-  if (!isStrong && !isGood && !isWeak) {
-    return -1;
+  const isExplicitlyIrrelevant =
+    /\blibrary\b|\bchurch\b|\bcathedral\b|\bmosque\b|\bsynagogue\b|\bschool\b|\bmusic\s*school\b|\binstrument\b|\bconcert\b|\bvenue\b/.test(
+      `${name} ${description} ${tagText}`
+    ) ||
+    amenity === "library" ||
+    amenity === "place_of_worship" ||
+    amenity === "school" ||
+    amenity === "music_school" ||
+    shop === "musical_instrument" ||
+    tourism === "attraction" ||
+    leisure === "music_venue" ||
+    office === "religion" ||
+    craft === "musical_instrument";
+
+  if (isExplicitlyIrrelevant) {
+    return {
+      score: -1,
+      confidence: "low",
+      rejectReason: "irrelevant category (library/church/school/instrument/venue)",
+    };
   }
 
-  let score = 0;
+  if (shop === "books" && !hasRecordSignals) {
+    return {
+      score: -1,
+      confidence: "low",
+      rejectReason: "generic bookstore without record/vinyl signals",
+    };
+  }
 
-  if (isStrong) score += 100;
-  if (isGood) score += 60;
-  if (isWeak) score += 30;
-  if (hasMusic) score += 10;
+  if (shop === "second_hand" && !hasRecordSignals) {
+    return {
+      score: -1,
+      confidence: "low",
+      rejectReason: "generic second-hand shop without record/vinyl signals",
+    };
+  }
 
-  return score;
+  if (shop === "music" && !hasRecordSignals) {
+    return {
+      score: -1,
+      confidence: "low",
+      rejectReason: "generic music store without record/vinyl signals",
+    };
+  }
+
+  if (nameHasRecordSignals) {
+    return { score: 120, confidence: "high" };
+  }
+
+  if (descHasRecordSignals || tagHasRecordSignals) {
+    return { score: 80, confidence: "medium" };
+  }
+
+  return {
+    score: -1,
+    confidence: "low",
+    rejectReason: "no record/vinyl confidence signal",
+  };
 }
 
 async function fetchNearbyFromOverpass(
@@ -180,7 +402,7 @@ out center tags;
 
     const seen = new Set<string>();
     const mapped = elements
-      .map((element) => {
+      .map((element): RankedStore | null => {
         const lat = element.lat ?? element.center?.lat;
         const lon = element.lon ?? element.center?.lon;
 
@@ -188,31 +410,75 @@ out center tags;
 
         const tags = element.tags ?? {};
         const name = tags.name?.trim();
-        if (!name) return null;
+        if (!name) {
+          console.log("[RecordQuest][stores] rejected result:", {
+            elementId: `${element.type}-${element.id}`,
+            reason: "missing name",
+          });
+          return null;
+        }
 
-        const score = rankStoreCandidate(tags);
-        if (score < 0) return null;
+        const classification = classifyStoreCandidate(tags);
+        if (classification.score < 0) {
+          console.log("[RecordQuest][stores] rejected result:", {
+            name,
+            elementId: `${element.type}-${element.id}`,
+            reason: classification.rejectReason ?? "low confidence",
+            shop: tags.shop ?? null,
+            amenity: tags.amenity ?? null,
+          });
+          return null;
+        }
+
+        if (classification.confidence !== "high") {
+          console.log("[RecordQuest][stores] rejected result:", {
+            name,
+            elementId: `${element.type}-${element.id}`,
+            reason: "not high confidence",
+            confidence: classification.confidence,
+          });
+          return null;
+        }
 
         const normalizedKey = `${name.toLowerCase()}_${lat.toFixed(4)}_${lon.toFixed(4)}`;
-        if (seen.has(normalizedKey)) return null;
+        if (seen.has(normalizedKey)) {
+          console.log("[RecordQuest][stores] rejected result:", {
+            name,
+            elementId: `${element.type}-${element.id}`,
+            reason: "duplicate",
+          });
+          return null;
+        }
         seen.add(normalizedKey);
 
         const distanceMiles = haversineDistanceMiles(latitude, longitude, lat, lon);
+        const address = buildAddress(tags, lat, lon);
+        const hasUsableAddressOrCoordinates = address.trim().length > 0 || (Number.isFinite(lat) && Number.isFinite(lon));
+
+        if (!hasUsableAddressOrCoordinates) {
+          console.log("[RecordQuest][stores] rejected result:", {
+            name,
+            elementId: `${element.type}-${element.id}`,
+            reason: "missing usable address/coordinates",
+          });
+          return null;
+        }
 
         return {
           id: `osm-${element.type}-${element.id}`,
           name,
           neighborhood: pickNeighborhood(tags),
-          address: buildAddress(tags, lat, lon),
+          address,
           rating: "—",
           distance: formatDistanceMiles(distanceMiles),
           hours: tags.opening_hours?.trim() || "Hours not listed",
           description: buildDescription(tags),
           _distanceMiles: distanceMiles,
-          _score: score,
+          _score: classification.score,
+          _confidence: "high",
         };
       })
-      .filter((store): store is RankedStore => !!store)
+      .filter((store): store is RankedStore => store !== null)
       .sort((a, b) => {
         if (b._score !== a._score) return b._score - a._score;
         return a._distanceMiles - b._distanceMiles;
@@ -229,7 +495,9 @@ out center tags;
   }
 }
 
-export async function discoverNearbyStores(fallbackStores: StoreItem[]): Promise<StoreDiscoveryResult> {
+export async function discoverNearbyStores(): Promise<StoreDiscoveryResult> {
+  const fallbackStores = getCuratedFallbackStores();
+
   try {
     console.log("[RecordQuest][stores] search radius miles:", metersToMiles(SEARCH_RADIUS_METERS).toFixed(1));
 
@@ -239,7 +507,7 @@ export async function discoverNearbyStores(fallbackStores: StoreItem[]): Promise
       console.log("[RecordQuest][stores] fallback reason: location permission denied");
       return {
         stores: fallbackStores,
-        notice: "Showing sample stores (location permission denied)",
+        notice: "Showing recommended record stores near you.",
         usingFallback: true,
       };
     }
@@ -256,27 +524,19 @@ export async function discoverNearbyStores(fallbackStores: StoreItem[]): Promise
     console.log("[RecordQuest][stores] raw Overpass result count:", result.rawCount);
     console.log("[RecordQuest][stores] filtered store count:", result.filteredCount);
 
-    const liveStores = result.stores;
-
-    if (liveStores.length === 0) {
-      console.log("[RecordQuest][stores] fallback reason: no qualifying nearby record stores");
-      return {
-        stores: fallbackStores,
-        notice: "No nearby record stores found — showing sample stores.",
-        usingFallback: true,
-      };
-    }
+    const curatedStores = buildCuratedFallbackStores(latitude, longitude);
+    const mergedStores = mergeCuratedWithSupplemental(curatedStores, result.stores);
 
     return {
-      stores: liveStores,
-      notice: "Showing nearby stores",
-      usingFallback: false,
+      stores: mergedStores,
+      notice: "Showing recommended record stores near you.",
+      usingFallback: result.stores.length === 0,
     };
   } catch (error) {
     console.log("[RecordQuest][stores] fallback reason: location or Overpass request failed", error);
     return {
       stores: fallbackStores,
-      notice: "Showing sample stores (could not load your location)",
+      notice: "Showing recommended record stores near you.",
       usingFallback: true,
     };
   }

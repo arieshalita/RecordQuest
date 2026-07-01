@@ -26,6 +26,12 @@ export type RecordQuestState = {
   storeCheckIns: Record<string, number>;
 };
 
+export type RecordQuestStateSource = "cloud" | "local";
+
+export type LoadedRecordQuestState = RecordQuestState & {
+  source: RecordQuestStateSource;
+};
+
 // TODO: Accounts Phase – New UserState type for authenticated user context
 // export type UserState = {
 //   userId: string;
@@ -97,7 +103,7 @@ async function saveLocalState(state: RecordQuestState): Promise<void> {
   ]);
 }
 
-export async function loadRecordQuestState(initialState: RecordQuestState) {
+export async function loadRecordQuestState(initialState: RecordQuestState): Promise<LoadedRecordQuestState> {
   try {
     const userId = await getAuthenticatedUserId();
 
@@ -123,17 +129,26 @@ export async function loadRecordQuestState(initialState: RecordQuestState) {
         wishlist,
         activity,
         storeCheckIns,
-      } satisfies RecordQuestState;
+        source: "cloud",
+      } satisfies LoadedRecordQuestState;
     }
 
     if (isSupabaseDataModeEnabled() && !userId) {
       console.warn("[RecordQuest][storage] Supabase mode active but no authenticated user found; using AsyncStorage fallback");
     }
 
-    return await loadLocalState(initialState);
+    const localState = await loadLocalState(initialState);
+    return {
+      ...localState,
+      source: "local",
+    } satisfies LoadedRecordQuestState;
   } catch (error) {
     console.warn("Error loading saved data:", error);
-    return await loadLocalState(initialState);
+    const localState = await loadLocalState(initialState);
+    return {
+      ...localState,
+      source: "local",
+    } satisfies LoadedRecordQuestState;
   }
 }
 

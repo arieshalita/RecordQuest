@@ -37,7 +37,11 @@ import { BottomNavigation } from "../../components/BottomNavigation";
 import { Toast } from "../../components/Toast";
 import { useAuth } from "../../providers/AuthProvider";
 import { isSupabaseDataModeEnabled } from "../../constants/data-mode";
-import { discoverNearbyStores, type StoreDiscoveryResult } from "../../hooks/store-discovery";
+import {
+  discoverNearbyStores,
+  getCuratedFallbackStores,
+  type StoreDiscoveryResult,
+} from "../../hooks/store-discovery";
 
 const starterRecords: RecordItem[] = [
   {
@@ -61,48 +65,7 @@ const starterRecords: RecordItem[] = [
   },
 ];
 
-const sampleRecordStores: StoreItem[] = [
-  {
-    id: "needham-vinyl",
-    name: "Needham Vinyl Exchange",
-    neighborhood: "Needham Center",
-    address: "123 Chestnut St, Needham, MA",
-    hours: "11am–8pm",
-    rating: "4.8 • 220 reviews",
-    distance: "2.1 mi",
-    description: "A curated collection of classic rock, soul, and indie records with a cozy listening lounge.",
-  },
-  {
-    id: "brookline-beats",
-    name: "Brookline Beats",
-    neighborhood: "Coolidge Corner",
-    address: "41 Harvard Ave, Brookline, MA",
-    hours: "10am–7pm",
-    rating: "4.7 • 180 reviews",
-    distance: "5.3 mi",
-    description: "Neighborhood shop with a strong selection of jazz, funk, and local Boston pressings.",
-  },
-  {
-    id: "cambridge-sound",
-    name: "Cambridge Sound Cave",
-    neighborhood: "Central Square",
-    address: "58 Mass Ave, Cambridge, MA",
-    hours: "11am–9pm",
-    rating: "4.9 • 310 reviews",
-    distance: "7.0 mi",
-    description: "Underground vinyl den with rare finds, live DJs, and a friendly crate-digging crowd.",
-  },
-  {
-    id: "watertown-wax",
-    name: "Watertown Wax Works",
-    neighborhood: "Watertown Square",
-    address: "10 Mt Auburn St, Watertown, MA",
-    hours: "12pm–8pm",
-    rating: "4.6 • 140 reviews",
-    distance: "6.2 mi",
-    description: "Bright shop with new and used vinyl, plus a small listening room for previewing stacks.",
-  },
-];
+const curatedFallbackStores: StoreItem[] = getCuratedFallbackStores();
 
 const STORES_UI_TIMEOUT_MS = 12000;
 
@@ -169,10 +132,11 @@ export default function App() {
   const [isEditingRecord, setIsEditingRecord] = useState(false);
   const [recordDraft, setRecordDraft] = useState<Partial<RecordItem>>({});
   const [storeCheckIns, setStoreCheckIns] = useState<Record<string, number>>({});
-  const [stores, setStores] = useState<StoreItem[]>(sampleRecordStores);
+  const [stores, setStores] = useState<StoreItem[]>(curatedFallbackStores);
   const [storesMessage, setStoresMessage] = useState("");
   const [isLoadingStores, setIsLoadingStores] = useState(false);
   const [hasLoadedStores, setHasLoadedStores] = useState(false);
+  const [recordStateSource, setRecordStateSource] = useState<"cloud" | "local">("local");
   const [loaded, setLoaded] = useState(false);
   const [showPurchaseModal, setShowPurchaseModal] = useState(false);
   const [recordBeingPromoted, setRecordBeingPromoted] = useState<RecordItem | null>(null);
@@ -184,7 +148,18 @@ export default function App() {
   const [successMessageTimer, setSuccessMessageTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
   const didHydrateRef = useRef(false);
 
-  const achievementCategories = calculateAchievementCategories(records, wishlist, storeCheckIns, activity);
+  const shouldUseCloudBadgeData = isSupabaseDataModeEnabled() && !!user;
+  const badgeRecords = shouldUseCloudBadgeData && recordStateSource !== "cloud" ? [] : records;
+  const badgeWishlist = shouldUseCloudBadgeData && recordStateSource !== "cloud" ? [] : wishlist;
+  const badgeStoreCheckIns = shouldUseCloudBadgeData && recordStateSource !== "cloud" ? {} : storeCheckIns;
+  const badgeActivity = shouldUseCloudBadgeData && recordStateSource !== "cloud" ? [] : activity;
+
+  const achievementCategories = calculateAchievementCategories(
+    badgeRecords,
+    badgeWishlist,
+    badgeStoreCheckIns,
+    badgeActivity
+  );
   const unlockedBadgeCount = achievementCategories
     .flatMap((category) => category.badges)
     .filter((badge) => badge.unlocked).length;
@@ -224,6 +199,7 @@ export default function App() {
       setWishlist(savedState.wishlist);
       setActivity(savedState.activity);
       setStoreCheckIns(savedState.storeCheckIns);
+      setRecordStateSource(savedState.source);
       didHydrateRef.current = false;
       setLoaded(true);
     }
@@ -262,19 +238,19 @@ export default function App() {
 
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
       let result: StoreDiscoveryResult = {
-        stores: sampleRecordStores,
-        notice: "No nearby record stores found — showing sample stores.",
+        stores: curatedFallbackStores,
+        notice: "Showing recommended record stores near you.",
         usingFallback: true,
       };
 
       try {
         result = await Promise.race([
-          discoverNearbyStores(sampleRecordStores),
+          discoverNearbyStores(),
           new Promise<StoreDiscoveryResult>((resolve) => {
             timeoutId = setTimeout(() => {
               resolve({
-                stores: sampleRecordStores,
-                notice: "No nearby record stores found — showing sample stores.",
+                stores: curatedFallbackStores,
+                notice: "Showing recommended record stores near you.",
                 usingFallback: true,
               });
             }, STORES_UI_TIMEOUT_MS);
@@ -282,8 +258,8 @@ export default function App() {
         ]);
       } catch {
         result = {
-          stores: sampleRecordStores,
-          notice: "Showing sample stores (could not load nearby stores)",
+          stores: curatedFallbackStores,
+          notice: "Showing recommended record stores near you.",
           usingFallback: true,
         };
       } finally {
@@ -581,7 +557,7 @@ export default function App() {
           <View style={styles.statsRow}>
             <StatCard value={records.length} label="Records" />
             <StatCard value={wishlist.length} label="Wishlist" />
-            <StatCard value={3} label="Badges" />
+            <StatCard value={unlockedBadgeCount} label="Badges" />
           </View>
 
           <Text style={styles.sectionTitle}>Explore</Text>
