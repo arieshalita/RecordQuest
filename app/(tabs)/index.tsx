@@ -28,6 +28,7 @@ import { AlbumDetailScreen } from "../../screens/AlbumDetailScreen";
 import { ProfileScreen } from "../../screens/ProfileScreen";
 import { StoreDetailScreen } from "../../screens/StoreDetailScreen";
 import { HomeScreen } from "../../screens/HomeScreen";
+import { DiscoverUsersScreen } from "../../screens/DiscoverUsersScreen";
 import { ConfirmPurchaseDetailsModal } from "../../components/ConfirmPurchaseDetailsModal";
 import { StatCard } from "../../components/StatCard";
 import { TopBar } from "../../components/TopBar";
@@ -42,6 +43,7 @@ import {
   getCuratedFallbackStores,
   type StoreDiscoveryResult,
 } from "../../hooks/store-discovery";
+import { getDiscoverUsers, type DiscoverUser } from "../../hooks/discover-users";
 
 const starterRecords: RecordItem[] = [
   {
@@ -139,6 +141,13 @@ export default function App() {
   const [recordStateSource, setRecordStateSource] = useState<"cloud" | "local">("local");
   const [loaded, setLoaded] = useState(false);
   const [showPurchaseModal, setShowPurchaseModal] = useState(false);
+  const [discoverUsers, setDiscoverUsers] = useState<DiscoverUser[]>([]);
+  const [discoverSearchText, setDiscoverSearchText] = useState("");
+  const [isDiscoverUsersLoading, setIsDiscoverUsersLoading] = useState(false);
+  const [discoverUsersError, setDiscoverUsersError] = useState<string | null>(null);
+  const [selectedProfileUserId, setSelectedProfileUserId] = useState<string | null>(null);
+  const [selectedProfileDisplayName, setSelectedProfileDisplayName] = useState<string | null>(null);
+  const [profileBackScreen, setProfileBackScreen] = useState<"Home" | "DiscoverUsers">("Home");
   const [recordBeingPromoted, setRecordBeingPromoted] = useState<RecordItem | null>(null);
   const [purchasePrice, setPurchasePrice] = useState("");
   const [purchaseDate, setPurchaseDate] = useState("");
@@ -285,6 +294,52 @@ export default function App() {
       isMounted = false;
     };
   }, [screen, detailStore, hasLoadedStores]);
+
+  useEffect(() => {
+    if (screen !== "DiscoverUsers") return;
+
+    let isMounted = true;
+
+    async function loadDiscoverUsers() {
+      if (!user?.id) {
+        setDiscoverUsers([]);
+        setDiscoverUsersError("You must be signed in to discover users.");
+        return;
+      }
+
+      setIsDiscoverUsersLoading(true);
+      setDiscoverUsersError(null);
+
+      try {
+        const users = await getDiscoverUsers(user.id);
+        if (!isMounted) return;
+        setDiscoverUsers(users);
+      } catch {
+        if (!isMounted) return;
+        setDiscoverUsers([]);
+        setDiscoverUsersError("Unable to load users right now.");
+      } finally {
+        if (!isMounted) return;
+        setIsDiscoverUsersLoading(false);
+      }
+    }
+
+    void loadDiscoverUsers();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [screen, user?.id]);
+
+  const filteredDiscoverUsers = discoverSearchText.trim()
+    ? discoverUsers.filter((discoverUser) => {
+        const query = discoverSearchText.trim().toLowerCase();
+        return (
+          discoverUser.displayName.toLowerCase().includes(query) ||
+          discoverUser.username.toLowerCase().includes(query)
+        );
+      })
+    : discoverUsers;
 
   // Cleanup success message timer on unmount
   useEffect(() => {
@@ -565,7 +620,24 @@ export default function App() {
           <HomeCard title="Find Stores" subtitle="Record shops and crate spots" onPress={() => setScreen("Stores")} />
           <HomeCard title="My Collection" subtitle="Albums you own" onPress={() => setScreen("Collection")} />
           <HomeCard title="Wishlist" subtitle="Records you’re hunting for" onPress={() => setScreen("Wishlist")} />
-          <HomeCard title="Profile" subtitle="Stats, badges, and activity" onPress={() => setScreen("Profile")} />
+          <HomeCard
+            title="Find Friends"
+            subtitle="Discover users and follow collectors"
+            onPress={() => {
+              setDiscoverSearchText("");
+              setScreen("DiscoverUsers");
+            }}
+          />
+          <HomeCard
+            title="Profile"
+            subtitle="Stats, badges, and activity"
+            onPress={() => {
+              setSelectedProfileUserId(null);
+              setSelectedProfileDisplayName(null);
+              setProfileBackScreen("Home");
+              setScreen("Profile");
+            }}
+          />
         </ScrollView>
       )}
 
@@ -664,6 +736,41 @@ export default function App() {
           achievementCategories={achievementCategories}
           activity={activity}
           storeCheckIns={storeCheckIns}
+          profileUserId={selectedProfileUserId ?? undefined}
+          profileDisplayName={selectedProfileDisplayName ?? undefined}
+          onOpenDiscoverUsers={() => {
+            setDiscoverSearchText("");
+            setScreen("DiscoverUsers");
+          }}
+          onBack={() => {
+            if (profileBackScreen === "DiscoverUsers") {
+              setScreen("DiscoverUsers");
+              return;
+            }
+
+            setScreen("Home");
+          }}
+        />
+      )}
+
+      {screen === "DiscoverUsers" && (
+        <DiscoverUsersScreen
+          users={filteredDiscoverUsers}
+          searchText={discoverSearchText}
+          onSearchTextChange={setDiscoverSearchText}
+          isLoading={isDiscoverUsersLoading}
+          errorMessage={discoverUsersError}
+          onRetry={() => {
+            setDiscoverUsersError(null);
+            setScreen("Home");
+            setScreen("DiscoverUsers");
+          }}
+          onOpenUser={(discoverUser) => {
+            setSelectedProfileUserId(discoverUser.userId);
+            setSelectedProfileDisplayName(discoverUser.displayName);
+            setProfileBackScreen("DiscoverUsers");
+            setScreen("Profile");
+          }}
           onBack={() => setScreen("Home")}
         />
       )}

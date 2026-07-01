@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ScrollView, Text, View, StyleSheet, Pressable } from "react-native";
+import { ScrollView, Text, View, StyleSheet, Pressable, TextInput } from "react-native";
 import { TopBar } from "../components/TopBar";
 import { StatCard } from "../components/StatCard";
 import { AnalyticsCard } from "../components/AnalyticsCard";
@@ -15,6 +15,11 @@ import {
   isFollowing,
   unfollowUser,
 } from "../hooks/user-follows";
+import {
+  getProfileIdentity,
+  sanitizeUsername,
+  saveOwnProfileIdentity,
+} from "../hooks/profile-identity";
 
 type ProfileScreenProps = {
   records: RecordItem[];
@@ -25,6 +30,8 @@ type ProfileScreenProps = {
   storeCheckIns: Record<string, number>;
   onBack: () => void;
   profileUserId?: string;
+  profileDisplayName?: string;
+  onOpenDiscoverUsers?: () => void;
 };
 
 function CollectionAnalyticsDashboard({ analytics }: { analytics: CollectionAnalytics }) {
@@ -94,6 +101,8 @@ export function ProfileScreen({
   storeCheckIns,
   onBack,
   profileUserId,
+  profileDisplayName,
+  onOpenDiscoverUsers,
 }: ProfileScreenProps) {
   const { signOut, user } = useAuth();
   const currentUserId = user?.id ?? null;
@@ -109,8 +118,20 @@ export function ProfileScreen({
   const [isFollowActionLoading, setIsFollowActionLoading] = useState(false);
   const [isFollowMetaLoading, setIsFollowMetaLoading] = useState(false);
   const [followError, setFollowError] = useState<string | null>(null);
+  const [profileUsername, setProfileUsername] = useState("");
+  const [profileDisplayNameState, setProfileDisplayNameState] = useState("");
+  const [isProfileIdentityLoading, setIsProfileIdentityLoading] = useState(false);
+  const [isEditingIdentity, setIsEditingIdentity] = useState(false);
+  const [displayNameDraft, setDisplayNameDraft] = useState("");
+  const [usernameDraft, setUsernameDraft] = useState("");
+  const [isSavingIdentity, setIsSavingIdentity] = useState(false);
+  const [identityError, setIdentityError] = useState<string | null>(null);
+  const [identitySuccess, setIdentitySuccess] = useState<string | null>(null);
 
   const analytics = calculateCollectionAnalytics(records, wishlist, storeCheckIns, activity);
+  const resolvedProfileName =
+    profileDisplayNameState ||
+    (isOwnProfile ? "Arie" : profileDisplayName ?? "Collector");
 
   const refreshFollowMeta = useCallback(async () => {
     if (!targetUserId) {
@@ -145,6 +166,36 @@ export function ProfileScreen({
     void refreshFollowMeta();
   }, [refreshFollowMeta]);
 
+  const refreshProfileIdentity = useCallback(async () => {
+    if (!targetUserId) {
+      setProfileUsername("");
+      setProfileDisplayNameState("");
+      setIsProfileIdentityLoading(false);
+      return;
+    }
+
+    setIsProfileIdentityLoading(true);
+
+    try {
+      const profile = await getProfileIdentity(targetUserId);
+      const fallbackName = isOwnProfile ? "Arie" : profileDisplayName ?? "Collector";
+
+      setProfileDisplayNameState(profile?.displayName ?? fallbackName);
+      setProfileUsername(profile?.username ?? "");
+
+      if (isOwnProfile) {
+        setDisplayNameDraft(profile?.displayName ?? fallbackName);
+        setUsernameDraft(profile?.username ?? "");
+      }
+    } finally {
+      setIsProfileIdentityLoading(false);
+    }
+  }, [isOwnProfile, profileDisplayName, targetUserId]);
+
+  useEffect(() => {
+    void refreshProfileIdentity();
+  }, [refreshProfileIdentity]);
+
   async function onToggleFollow() {
     if (!targetUserId || isOwnProfile || isFollowActionLoading) {
       return;
@@ -173,6 +224,34 @@ export function ProfileScreen({
     }
   }
 
+  async function onSaveIdentity() {
+    if (!currentUserId || !isOwnProfile || isSavingIdentity) {
+      return;
+    }
+
+    setIsSavingIdentity(true);
+    setIdentityError(null);
+    setIdentitySuccess(null);
+
+    try {
+      const result = await saveOwnProfileIdentity(currentUserId, displayNameDraft, usernameDraft);
+
+      if (!result.success) {
+        setIdentityError(result.error ?? "Could not update your profile.");
+        return;
+      }
+
+      setProfileDisplayNameState(result.profile?.displayName ?? displayNameDraft.trim());
+      setProfileUsername(result.profile?.username ?? sanitizeUsername(usernameDraft));
+      setDisplayNameDraft(result.profile?.displayName ?? displayNameDraft.trim());
+      setUsernameDraft(result.profile?.username ?? sanitizeUsername(usernameDraft));
+      setIdentitySuccess("Profile updated.");
+      setIsEditingIdentity(false);
+    } finally {
+      setIsSavingIdentity(false);
+    }
+  }
+
   return (
     <ScrollView contentContainerStyle={styles.page}>
       <TopBar title="Profile" back={onBack} />
@@ -182,8 +261,14 @@ export function ProfileScreen({
           <Text style={styles.avatarText}>A</Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.profileName}>Arie</Text>
-          <Text style={styles.profileSub}>Vinyl collector</Text>
+          <Text style={styles.profileName}>{resolvedProfileName}</Text>
+          <Text style={styles.profileSub}>
+            {isProfileIdentityLoading
+              ? "Loading profile..."
+              : profileUsername
+                ? `@${profileUsername}`
+                : "Vinyl collector"}
+          </Text>
           <Text style={styles.profileBio}>Building the ultimate crate-digging log.</Text>
           <View style={styles.followMetaRow}>
             <Text style={styles.followMetaText}>
@@ -193,6 +278,80 @@ export function ProfileScreen({
               {isFollowMetaLoading ? "Following ..." : `Following ${followingCount}`}
             </Text>
           </View>
+
+          {isOwnProfile && onOpenDiscoverUsers ? (
+            <Pressable
+              style={styles.discoverUsersButton}
+              onPress={onOpenDiscoverUsers}
+            >
+              <Text style={styles.discoverUsersButtonText}>Find Friends</Text>
+            </Pressable>
+          ) : null}
+
+          {isOwnProfile && !isEditingIdentity ? (
+            <Pressable
+              style={styles.editProfileButton}
+              onPress={() => {
+                setIdentityError(null);
+                setIdentitySuccess(null);
+                setIsEditingIdentity(true);
+              }}
+            >
+              <Text style={styles.editProfileButtonText}>Edit Profile</Text>
+            </Pressable>
+          ) : null}
+
+          {isOwnProfile && isEditingIdentity ? (
+            <View style={styles.editProfilePanel}>
+              <TextInput
+                value={displayNameDraft}
+                onChangeText={setDisplayNameDraft}
+                placeholder="Display name"
+                placeholderTextColor="#8F8AA6"
+                style={styles.profileInput}
+                editable={!isSavingIdentity}
+              />
+              <TextInput
+                value={usernameDraft}
+                onChangeText={(value) => {
+                  setUsernameDraft(sanitizeUsername(value));
+                }}
+                placeholder="username"
+                autoCapitalize="none"
+                autoCorrect={false}
+                placeholderTextColor="#8F8AA6"
+                style={styles.profileInput}
+                editable={!isSavingIdentity}
+              />
+              <View style={styles.editActionsRow}>
+                <Pressable
+                  style={[styles.editActionButton, styles.editSaveButton]}
+                  onPress={() => {
+                    void onSaveIdentity();
+                  }}
+                  disabled={isSavingIdentity}
+                >
+                  <Text style={styles.editSaveButtonText}>{isSavingIdentity ? "Saving..." : "Save"}</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.editActionButton, styles.editCancelButton]}
+                  onPress={() => {
+                    setDisplayNameDraft(profileDisplayNameState || "Arie");
+                    setUsernameDraft(profileUsername);
+                    setIdentityError(null);
+                    setIdentitySuccess(null);
+                    setIsEditingIdentity(false);
+                  }}
+                  disabled={isSavingIdentity}
+                >
+                  <Text style={styles.editCancelButtonText}>Cancel</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+
+          {identityError ? <Text style={styles.identityErrorText}>{identityError}</Text> : null}
+          {identitySuccess ? <Text style={styles.identitySuccessText}>{identitySuccess}</Text> : null}
 
           {!isOwnProfile && (
             <Pressable
@@ -325,6 +484,92 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderWidth: 1,
+  },
+  discoverUsersButton: {
+    marginTop: 12,
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: "#3E3B5C",
+    backgroundColor: "rgba(62, 59, 92, 0.55)",
+  },
+  discoverUsersButtonText: {
+    color: "#C4BEE0",
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
+  editProfileButton: {
+    marginTop: 10,
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: "#3E3B5C",
+    backgroundColor: "rgba(62, 59, 92, 0.55)",
+  },
+  editProfileButtonText: {
+    color: "#C4BEE0",
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
+  editProfilePanel: {
+    marginTop: 12,
+    gap: 8,
+  },
+  profileInput: {
+    backgroundColor: "rgba(30, 26, 50, 0.98)",
+    color: "#f3e7ce",
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    fontSize: 13,
+    borderWidth: 1,
+    borderColor: "rgba(104, 79, 191, 0.26)",
+    fontWeight: "500",
+  },
+  editActionsRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 2,
+  },
+  editActionButton: {
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+  },
+  editSaveButton: {
+    backgroundColor: "#7C3AED",
+    borderColor: "#6D28D9",
+  },
+  editSaveButtonText: {
+    color: "#FFF4D6",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  editCancelButton: {
+    backgroundColor: "rgba(62, 59, 92, 0.55)",
+    borderColor: "#3E3B5C",
+  },
+  editCancelButtonText: {
+    color: "#C4BEE0",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  identityErrorText: {
+    color: "#FCA5A5",
+    fontSize: 12,
+    marginTop: 8,
+  },
+  identitySuccessText: {
+    color: "#86EFAC",
+    fontSize: 12,
+    marginTop: 8,
   },
   followCtaButton: {
     backgroundColor: "#7C3AED",
