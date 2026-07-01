@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, Text, View, StyleSheet, Pressable } from "react-native";
 import { TopBar } from "../components/TopBar";
 import { StatCard } from "../components/StatCard";
@@ -8,6 +8,13 @@ import { AchievementBadgeCard } from "../components/AchievementBadgeCard";
 import { useAuth } from "../providers/AuthProvider";
 import type { RecordItem, AchievementCategory, CollectionAnalytics } from "../hooks/types";
 import { calculateCollectionAnalytics } from "../utils/analytics";
+import {
+  followUser,
+  getFollowerCount,
+  getFollowingCount,
+  isFollowing,
+  unfollowUser,
+} from "../hooks/user-follows";
 
 type ProfileScreenProps = {
   records: RecordItem[];
@@ -17,6 +24,7 @@ type ProfileScreenProps = {
   activity: string[];
   storeCheckIns: Record<string, number>;
   onBack: () => void;
+  profileUserId?: string;
 };
 
 function CollectionAnalyticsDashboard({ analytics }: { analytics: CollectionAnalytics }) {
@@ -85,9 +93,85 @@ export function ProfileScreen({
   activity,
   storeCheckIns,
   onBack,
+  profileUserId,
 }: ProfileScreenProps) {
-  const { signOut } = useAuth();
+  const { signOut, user } = useAuth();
+  const currentUserId = user?.id ?? null;
+  const targetUserId = profileUserId ?? currentUserId;
+  const isOwnProfile = useMemo(
+    () => !targetUserId || targetUserId === currentUserId,
+    [currentUserId, targetUserId]
+  );
+
+  const [followerCount, setFollowerCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
+  const [followingState, setFollowingState] = useState(false);
+  const [isFollowActionLoading, setIsFollowActionLoading] = useState(false);
+  const [isFollowMetaLoading, setIsFollowMetaLoading] = useState(false);
+  const [followError, setFollowError] = useState<string | null>(null);
+
   const analytics = calculateCollectionAnalytics(records, wishlist, storeCheckIns, activity);
+
+  const refreshFollowMeta = useCallback(async () => {
+    if (!targetUserId) {
+      setFollowerCount(0);
+      setFollowingCount(0);
+      setFollowingState(false);
+      setIsFollowMetaLoading(false);
+      return;
+    }
+
+    setIsFollowMetaLoading(true);
+    setFollowError(null);
+
+    try {
+      const [followers, following, amFollowing] = await Promise.all([
+        getFollowerCount(targetUserId),
+        getFollowingCount(targetUserId),
+        isOwnProfile ? Promise.resolve(false) : isFollowing(targetUserId),
+      ]);
+
+      setFollowerCount(followers);
+      setFollowingCount(following);
+      setFollowingState(amFollowing);
+    } catch {
+      setFollowError("Could not load follow details.");
+    } finally {
+      setIsFollowMetaLoading(false);
+    }
+  }, [isOwnProfile, targetUserId]);
+
+  useEffect(() => {
+    void refreshFollowMeta();
+  }, [refreshFollowMeta]);
+
+  async function onToggleFollow() {
+    if (!targetUserId || isOwnProfile || isFollowActionLoading) {
+      return;
+    }
+
+    setIsFollowActionLoading(true);
+    setFollowError(null);
+
+    try {
+      const result = followingState
+        ? await unfollowUser(targetUserId)
+        : await followUser(targetUserId);
+
+      if (!result.success) {
+        setFollowError(result.error ?? "Could not update follow status.");
+        return;
+      }
+
+      setFollowingState((current) => !current);
+      setFollowerCount((current) => (followingState ? Math.max(0, current - 1) : current + 1));
+      await refreshFollowMeta();
+    } catch {
+      setFollowError("Could not update follow status.");
+    } finally {
+      setIsFollowActionLoading(false);
+    }
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.page}>
@@ -101,6 +185,30 @@ export function ProfileScreen({
           <Text style={styles.profileName}>Arie</Text>
           <Text style={styles.profileSub}>Vinyl collector</Text>
           <Text style={styles.profileBio}>Building the ultimate crate-digging log.</Text>
+          <View style={styles.followMetaRow}>
+            <Text style={styles.followMetaText}>
+              {isFollowMetaLoading ? "Followers ..." : `Followers ${followerCount}`}
+            </Text>
+            <Text style={styles.followMetaText}>
+              {isFollowMetaLoading ? "Following ..." : `Following ${followingCount}`}
+            </Text>
+          </View>
+
+          {!isOwnProfile && (
+            <Pressable
+              style={[styles.followButton, followingState ? styles.followingButton : styles.followCtaButton]}
+              onPress={() => {
+                void onToggleFollow();
+              }}
+              disabled={isFollowActionLoading}
+            >
+              <Text style={[styles.followButtonText, followingState ? styles.followingButtonText : styles.followCtaButtonText]}>
+                {isFollowActionLoading ? "Updating..." : followingState ? "Following" : "Follow"}
+              </Text>
+            </Pressable>
+          )}
+
+          {followError ? <Text style={styles.followErrorText}>{followError}</Text> : null}
         </View>
       </View>
 
@@ -199,6 +307,48 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 6,
     lineHeight: 16,
+  },
+  followMetaRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 10,
+  },
+  followMetaText: {
+    color: "#C4BEE0",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  followButton: {
+    marginTop: 12,
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+  },
+  followCtaButton: {
+    backgroundColor: "#7C3AED",
+    borderColor: "#6D28D9",
+  },
+  followingButton: {
+    backgroundColor: "rgba(62, 59, 92, 0.55)",
+    borderColor: "#3E3B5C",
+  },
+  followButtonText: {
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
+  followCtaButtonText: {
+    color: "#FFF4D6",
+  },
+  followingButtonText: {
+    color: "#C4BEE0",
+  },
+  followErrorText: {
+    color: "#FCA5A5",
+    fontSize: 12,
+    marginTop: 8,
   },
   statsRow: {
     flexDirection: "row",
