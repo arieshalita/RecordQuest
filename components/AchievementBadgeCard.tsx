@@ -21,11 +21,15 @@ export function AchievementBadgeCard({ badge }: AchievementBadgeCardProps) {
       <Text style={[styles.badgeEmoji, badge.unlocked ? styles.badgeEmojiUnlocked : styles.badgeEmojiLocked]}>
         {badge.emoji}
       </Text>
-      <Text style={[styles.badgeLabel, badge.unlocked ? styles.badgeLabelUnlocked : styles.badgeLabelLocked]}>
+      <Text
+        style={[styles.badgeLabel, badge.unlocked ? styles.badgeLabelUnlocked : styles.badgeLabelLocked]}
+        numberOfLines={2}
+      >
         {badge.label}
       </Text>
       <Text
         style={[styles.badgeRequirement, badge.unlocked ? styles.badgeRequirementUnlocked : styles.badgeRequirementLocked]}
+        numberOfLines={3}
       >
         {badge.requirement}
       </Text>
@@ -44,15 +48,15 @@ export function AchievementBadgeCard({ badge }: AchievementBadgeCardProps) {
 const styles = StyleSheet.create({
   badgeCard: {
     backgroundColor: "rgba(18, 16, 38, 0.96)",
-    borderRadius: 24,
-    paddingVertical: 20,
-    paddingHorizontal: 16,
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
     alignItems: "center",
-    justifyContent: "center",
-    flex: 1,
-    minHeight: 180,
+    justifyContent: "space-between",
+    width: 150,
+    minHeight: 152,
     borderWidth: 2,
-    marginBottom: 0,
+    marginBottom: 2,
   },
   badgeCardUnlocked: {
     borderColor: "rgba(212, 175, 55, 0.40)",
@@ -63,23 +67,23 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(18, 16, 38, 0.60)",
   },
   badgeEmoji: {
-    fontSize: 44,
-    marginBottom: 10,
+    fontSize: 30,
+    marginBottom: 6,
   },
   badgeEmojiUnlocked: {
-    fontSize: 44,
+    fontSize: 30,
   },
   badgeEmojiLocked: {
-    fontSize: 44,
+    fontSize: 30,
     opacity: 0.4,
   },
   badgeLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "800",
-    marginBottom: 8,
+    marginBottom: 4,
     textAlign: "center",
-    lineHeight: 15,
-    maxWidth: "90%",
+    lineHeight: 14,
+    width: "100%",
   },
   badgeLabelUnlocked: {
     color: "#fff4d6",
@@ -88,12 +92,12 @@ const styles = StyleSheet.create({
     color: "#57516C",
   },
   badgeRequirement: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: "600",
-    marginBottom: 8,
+    marginBottom: 6,
     textAlign: "center",
-    lineHeight: 11,
-    maxWidth: "90%",
+    lineHeight: 13,
+    width: "100%",
   },
   badgeRequirementUnlocked: {
     color: "#d6c2a1",
@@ -102,24 +106,24 @@ const styles = StyleSheet.create({
     color: "#57516C",
   },
   badgeProgress: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "700",
-    marginBottom: 6,
+    marginBottom: 4,
     textAlign: "center",
     lineHeight: 14,
   },
   badgeProgressUnlocked: {
-    color: "#d4af37",
+    color: "#f2cc72",
   },
   badgeProgressLocked: {
     color: "#57516C",
   },
   badgeStatus: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: "800",
     textTransform: "uppercase",
     lineHeight: 12,
-    marginTop: 2,
+    marginTop: 0,
   },
   badgeStatusUnlocked: {
     color: "#d4af37",

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ScrollView, Text, View, StyleSheet, Pressable, TextInput, Image } from "react-native";
+import { ScrollView, Text, View, StyleSheet, Pressable, TextInput, Image, Modal } from "react-native";
 import { TopBar } from "../components/TopBar";
 import { StatCard } from "../components/StatCard";
 import { AnalyticsCard } from "../components/AnalyticsCard";
@@ -34,6 +34,49 @@ type ProfileScreenProps = {
   profileDisplayName?: string;
   onOpenDiscoverUsers?: () => void;
 };
+
+type FeatureTile = {
+  key: "store-explorer" | "achievements" | "collector-journal";
+  icon: string;
+  title: string;
+  subtitle: string;
+  description: string;
+  nextStep: string;
+  categoryTitle?: string;
+  accentColor: string;
+};
+
+const FEATURE_TILES: FeatureTile[] = [
+  {
+    key: "store-explorer",
+    icon: "🗺️",
+    title: "Store Explorer",
+    subtitle: "Check-ins and crate-digging milestones",
+    description: "Track your record store visits and unlock exploration badges as you check in more often.",
+    nextStep: "Visit a record store and check in to begin unlocking this track.",
+    categoryTitle: "Store Explorer",
+    accentColor: "#14B8A6",
+  },
+  {
+    key: "achievements",
+    icon: "🏆",
+    title: "Achievements",
+    subtitle: "Your total badge progress",
+    description: "This track summarizes your overall RecordQuest badge completion across all categories.",
+    nextStep: "Add records, grow your wishlist, and log activity to unlock more badges.",
+    accentColor: "#A78BFA",
+  },
+  {
+    key: "collector-journal",
+    icon: "📖",
+    title: "Collector Journal",
+    subtitle: "Stories, notes, ratings, and memory logs",
+    description: "Capture details about your records to unlock journal-focused achievements.",
+    nextStep: "Add notes, ratings, and purchase details on your records to progress this track.",
+    categoryTitle: "Collector Journal",
+    accentColor: "#F59E0B",
+  },
+];
 
 function CollectionAnalyticsDashboard({ analytics }: { analytics: CollectionAnalytics }) {
   return (
@@ -131,11 +174,70 @@ export function ProfileScreen({
   const [publicCollectionRecords, setPublicCollectionRecords] = useState<PublicRecordPreview[]>([]);
   const [isPublicCollectionLoading, setIsPublicCollectionLoading] = useState(false);
   const [publicCollectionError, setPublicCollectionError] = useState<string | null>(null);
+  const [selectedFeatureTile, setSelectedFeatureTile] = useState<FeatureTile | null>(null);
 
   const analytics = calculateCollectionAnalytics(records, wishlist, storeCheckIns, activity);
+  const allBadges = useMemo(
+    () => achievementCategories.flatMap((category) => category.badges),
+    [achievementCategories]
+  );
+  const categoryProgressMap = useMemo(() => {
+    const map = new Map<string, { unlocked: number; total: number }>();
+
+    for (const category of achievementCategories) {
+      const total = category.badges.length;
+      const unlocked = category.badges.filter((badge) => badge.unlocked).length;
+      map.set(category.title, { unlocked, total });
+    }
+
+    return map;
+  }, [achievementCategories]);
   const resolvedProfileName =
     profileDisplayNameState ||
     (isOwnProfile ? "Arie" : profileDisplayName ?? "Collector");
+
+  function getFeatureStatus(tile: FeatureTile): {
+    label: "Unlocked" | "In Progress" | "Locked";
+    progressText: string;
+  } {
+    let unlocked = 0;
+    let total = 0;
+
+    if (tile.key === "achievements") {
+      unlocked = unlockedBadgeCount;
+      total = allBadges.length;
+    } else if (tile.categoryTitle) {
+      const categoryProgress = categoryProgressMap.get(tile.categoryTitle);
+      unlocked = categoryProgress?.unlocked ?? 0;
+      total = categoryProgress?.total ?? 0;
+    }
+
+    if (total === 0) {
+      return {
+        label: "Locked",
+        progressText: "No badges available yet",
+      };
+    }
+
+    if (unlocked >= total) {
+      return {
+        label: "Unlocked",
+        progressText: `${unlocked}/${total} complete`,
+      };
+    }
+
+    if (unlocked > 0) {
+      return {
+        label: "In Progress",
+        progressText: `${unlocked}/${total} complete`,
+      };
+    }
+
+    return {
+      label: "Locked",
+      progressText: `${unlocked}/${total} complete`,
+    };
+  }
 
   const refreshFollowMeta = useCallback(async () => {
     if (!targetUserId) {
@@ -289,6 +391,7 @@ export function ProfileScreen({
   }
 
   return (
+    <>
     <ScrollView contentContainerStyle={styles.page}>
       <TopBar title="Profile" back={onBack} />
 
@@ -415,17 +518,55 @@ export function ProfileScreen({
             <StatCard value={unlockedBadgeCount} label="Badges" />
           </View>
 
+          <Text style={styles.sectionTitle}>Quest Tracks</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.featureTileRow}
+          >
+            {FEATURE_TILES.map((tile) => {
+              const status = getFeatureStatus(tile);
+
+              return (
+                <Pressable
+                  key={tile.key}
+                  style={[
+                    styles.featureTile,
+                    {
+                      borderColor: `${tile.accentColor}66`,
+                    },
+                  ]}
+                  onPress={() => setSelectedFeatureTile(tile)}
+                >
+                  <View style={styles.featureTileTopRow}>
+                    <Text style={styles.featureTileIcon}>{tile.icon}</Text>
+                    <View style={[styles.featureTileStatusPill, { borderColor: `${tile.accentColor}80`, backgroundColor: `${tile.accentColor}26` }] }>
+                      <Text style={styles.featureTileStatusText}>{status.label}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.featureTileTitle} numberOfLines={1}>{tile.title}</Text>
+                  <Text style={styles.featureTileSubtitle} numberOfLines={2}>{tile.subtitle}</Text>
+                  <Text style={styles.featureTileProgress} numberOfLines={1}>{status.progressText}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
           <CollectionAnalyticsDashboard analytics={analytics} />
 
           <Text style={styles.sectionTitle}>Achievements</Text>
           {achievementCategories.map((category) => (
             <View key={category.title} style={styles.achievementCategory}>
               <Text style={styles.achievementCategoryTitle}>{category.title}</Text>
-              <View style={styles.achievementGrid}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.achievementGrid}
+              >
                 {category.badges.map((badge) => (
                   <AchievementBadgeCard key={badge.id} badge={badge} />
                 ))}
-              </View>
+              </ScrollView>
             </View>
           ))}
 
@@ -494,6 +635,35 @@ export function ProfileScreen({
         </>
       )}
     </ScrollView>
+    <Modal
+      transparent
+      visible={!!selectedFeatureTile}
+      animationType="fade"
+      onRequestClose={() => setSelectedFeatureTile(null)}
+    >
+      <Pressable style={styles.featureModalOverlay} onPress={() => setSelectedFeatureTile(null)}>
+        <Pressable style={styles.featureModalCard} onPress={() => {}}>
+          {selectedFeatureTile ? (
+            <>
+              <Text style={styles.featureModalIcon}>{selectedFeatureTile.icon}</Text>
+              <Text style={styles.featureModalTitle}>{selectedFeatureTile.title}</Text>
+              <Text style={styles.featureModalDescription}>{selectedFeatureTile.description}</Text>
+              <View style={styles.featureModalMetaCard}>
+                <Text style={styles.featureModalMetaLabel}>Status</Text>
+                <Text style={styles.featureModalMetaValue}>{getFeatureStatus(selectedFeatureTile).label}</Text>
+                <Text style={styles.featureModalMetaSub}>{getFeatureStatus(selectedFeatureTile).progressText}</Text>
+              </View>
+              <Text style={styles.featureModalNextStepLabel}>Next step</Text>
+              <Text style={styles.featureModalNextStepText}>{selectedFeatureTile.nextStep}</Text>
+              <Pressable style={styles.featureModalCloseButton} onPress={() => setSelectedFeatureTile(null)}>
+                <Text style={styles.featureModalCloseButtonText}>Close</Text>
+              </Pressable>
+            </>
+          ) : null}
+        </Pressable>
+      </Pressable>
+    </Modal>
+    </>
   );
 }
 
@@ -689,6 +859,59 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 22,
   },
+  featureTileRow: {
+    gap: 10,
+    paddingBottom: 6,
+    paddingRight: 8,
+    marginBottom: 8,
+  },
+  featureTile: {
+    width: 210,
+    minHeight: 132,
+    backgroundColor: "rgba(18, 16, 34, 0.90)",
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 12,
+    justifyContent: "space-between",
+  },
+  featureTileTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  featureTileIcon: {
+    fontSize: 18,
+  },
+  featureTileStatusPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  featureTileStatusText: {
+    color: "#F8EED4",
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
+  featureTileTitle: {
+    color: "#F8EED4",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  featureTileSubtitle: {
+    color: "#CFC7E6",
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 4,
+  },
+  featureTileProgress: {
+    color: "#E9D8B4",
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 8,
+  },
   sectionTitle: {
     color: "#F8EED4",
     fontSize: 17,
@@ -723,9 +946,8 @@ const styles = StyleSheet.create({
   },
   achievementGrid: {
     flexDirection: "row",
-    flexWrap: "wrap",
     gap: 10,
-    justifyContent: "flex-start",
+    paddingRight: 8,
   },
   emptyFeatureCard: {
     borderWidth: 1,
@@ -807,5 +1029,87 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600",
     letterSpacing: 0.2,
+  },
+  featureModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(3, 2, 8, 0.72)",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  featureModalCard: {
+    backgroundColor: "rgba(16, 14, 28, 0.98)",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.34)",
+    padding: 18,
+  },
+  featureModalIcon: {
+    fontSize: 30,
+    marginBottom: 8,
+  },
+  featureModalTitle: {
+    color: "#F8EED4",
+    fontSize: 20,
+    fontWeight: "800",
+  },
+  featureModalDescription: {
+    marginTop: 8,
+    color: "#CFC7E6",
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  featureModalMetaCard: {
+    marginTop: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.30)",
+    backgroundColor: "rgba(124, 58, 237, 0.12)",
+    padding: 12,
+  },
+  featureModalMetaLabel: {
+    color: "#BDB4D7",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
+  featureModalMetaValue: {
+    color: "#F8EED4",
+    fontSize: 15,
+    fontWeight: "800",
+    marginTop: 5,
+  },
+  featureModalMetaSub: {
+    color: "#D8CCEB",
+    fontSize: 12,
+    marginTop: 2,
+  },
+  featureModalNextStepLabel: {
+    marginTop: 12,
+    color: "#E9D8B4",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
+  featureModalNextStepText: {
+    marginTop: 4,
+    color: "#D8CCEB",
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  featureModalCloseButton: {
+    marginTop: 16,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.48)",
+    backgroundColor: "rgba(124, 58, 237, 0.25)",
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  featureModalCloseButtonText: {
+    color: "#F8EED4",
+    fontSize: 13,
+    fontWeight: "700",
   },
 });
