@@ -64,7 +64,7 @@ export async function getDiscoverUsers(currentUserId: string): Promise<DiscoverU
     .limit(200);
 
   if (error) {
-    return [];
+    throw new Error(error.message || "Unable to load users.");
   }
 
   const rows = (Array.isArray(data) ? (data as unknown[]) : []).filter(

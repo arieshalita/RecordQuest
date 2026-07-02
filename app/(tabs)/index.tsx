@@ -168,6 +168,7 @@ export default function App() {
   const lastFollowingFeedLoadRef = useRef(0);
   const hasLoadedFollowingFeedRef = useRef(false);
   const suppressNextTypeaheadRef = useRef(false);
+  const latestAlbumSearchRequestRef = useRef(0);
 
   const shouldUseCloudBadgeData = isSupabaseDataModeEnabled() && !!user;
   const badgeRecords = shouldUseCloudBadgeData && recordStateSource !== "cloud" ? [] : records;
@@ -549,17 +550,21 @@ export default function App() {
 
   async function runAlbumSearch(queryAlbum: string, queryArtist: string, manualSearch = false) {
     const trimmedAlbum = queryAlbum.trim();
+    latestAlbumSearchRequestRef.current += 1;
+    const requestId = latestAlbumSearchRequestRef.current;
 
     if (!trimmedAlbum) {
       setSearchResults([]);
       setSelectedMetadata(null);
       setSearchMessage("");
+      setIsSearching(false);
       return;
     }
 
     if (trimmedAlbum.length < ALBUM_TYPEAHEAD_MIN_CHARS) {
       setSearchResults([]);
       setSearchMessage("");
+      setIsSearching(false);
       return;
     }
 
@@ -568,17 +573,27 @@ export default function App() {
 
     try {
       const results = await searchAlbumResults(trimmedAlbum, queryArtist);
+      if (requestId !== latestAlbumSearchRequestRef.current) {
+        return;
+      }
+
       setSearchResults(results);
 
       if (!results.length) {
         setSearchMessage("No results found.");
       }
     } catch (error) {
+      if (requestId !== latestAlbumSearchRequestRef.current) {
+        return;
+      }
+
       console.warn("Album search request failed:", error);
       setSearchResults([]);
       setSearchMessage("Search unavailable. You can still add manually.");
     } finally {
-      setIsSearching(false);
+      if (requestId === latestAlbumSearchRequestRef.current) {
+        setIsSearching(false);
+      }
     }
   }
 
@@ -593,8 +608,10 @@ export default function App() {
 
     const trimmedAlbum = album.trim();
     if (!trimmedAlbum) {
+      latestAlbumSearchRequestRef.current += 1;
       setSearchResults([]);
       setSearchMessage("");
+      setIsSearching(false);
       return;
     }
 
@@ -604,8 +621,10 @@ export default function App() {
     }
 
     if (trimmedAlbum.length < ALBUM_TYPEAHEAD_MIN_CHARS) {
+      latestAlbumSearchRequestRef.current += 1;
       setSearchResults([]);
       setSearchMessage("");
+      setIsSearching(false);
       return;
     }
 
@@ -623,7 +642,9 @@ export default function App() {
     // Clear all search/selection state when user starts typing
     setSelectedMetadata(null);
     if (value.trim().length < ALBUM_TYPEAHEAD_MIN_CHARS) {
+      latestAlbumSearchRequestRef.current += 1;
       setSearchResults([]);
+      setIsSearching(false);
     }
     setSearchMessage("");
     setAddFormMessage("");
@@ -633,7 +654,9 @@ export default function App() {
     setArtist(value);
     setSelectedMetadata(null);
     if (album.trim().length < ALBUM_TYPEAHEAD_MIN_CHARS) {
+      latestAlbumSearchRequestRef.current += 1;
       setSearchResults([]);
+      setIsSearching(false);
     }
     setSearchMessage("");
     setAddFormMessage("");
@@ -926,11 +949,14 @@ export default function App() {
           onSearch={searchAlbum}
           onSelectResult={(result) => {
             suppressNextTypeaheadRef.current = true;
+            latestAlbumSearchRequestRef.current += 1;
             setAlbum(result.album);
             setArtist(result.artist);
             setSelectedMetadata(result);
             setSearchResults([]);
-            setSearchMessage(`Selected ${result.album}. Album details prefilled.`);
+            setSearchMessage("");
+            setAddFormMessage(`Selected ${result.album}. Album details prefilled.`);
+            setIsSearching(false);
           }}
           onAdd={() => addRecord(false)}
           onRemove={removeRecord}
@@ -958,11 +984,14 @@ export default function App() {
           onSearch={searchAlbum}
           onSelectResult={(result) => {
             suppressNextTypeaheadRef.current = true;
+            latestAlbumSearchRequestRef.current += 1;
             setAlbum(result.album);
             setArtist(result.artist);
             setSelectedMetadata(result);
             setSearchResults([]);
-            setSearchMessage(`Selected ${result.album}. Album details prefilled.`);
+            setSearchMessage("");
+            setAddFormMessage(`Selected ${result.album}. Album details prefilled.`);
+            setIsSearching(false);
           }}
           onAdd={() => addRecord(true)}
           onFound={markFound}
