@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ScrollView, Text, View, StyleSheet, Pressable, TextInput } from "react-native";
+import { ScrollView, Text, View, StyleSheet, Pressable, TextInput, Image } from "react-native";
 import { TopBar } from "../components/TopBar";
 import { StatCard } from "../components/StatCard";
 import { AnalyticsCard } from "../components/AnalyticsCard";
@@ -20,6 +20,7 @@ import {
   sanitizeUsername,
   saveOwnProfileIdentity,
 } from "../hooks/profile-identity";
+import { loadPublicCollectionPreview, type PublicRecordPreview } from "../hooks/public-collection-preview";
 
 type ProfileScreenProps = {
   records: RecordItem[];
@@ -127,6 +128,9 @@ export function ProfileScreen({
   const [isSavingIdentity, setIsSavingIdentity] = useState(false);
   const [identityError, setIdentityError] = useState<string | null>(null);
   const [identitySuccess, setIdentitySuccess] = useState<string | null>(null);
+  const [publicCollectionRecords, setPublicCollectionRecords] = useState<PublicRecordPreview[]>([]);
+  const [isPublicCollectionLoading, setIsPublicCollectionLoading] = useState(false);
+  const [publicCollectionError, setPublicCollectionError] = useState<string | null>(null);
 
   const analytics = calculateCollectionAnalytics(records, wishlist, storeCheckIns, activity);
   const resolvedProfileName =
@@ -195,6 +199,38 @@ export function ProfileScreen({
   useEffect(() => {
     void refreshProfileIdentity();
   }, [refreshProfileIdentity]);
+
+  useEffect(() => {
+    if (isOwnProfile || !targetUserId) {
+      setPublicCollectionRecords([]);
+      setIsPublicCollectionLoading(false);
+      setPublicCollectionError(null);
+      return;
+    }
+
+    const viewedUserId = targetUserId;
+
+    let isMounted = true;
+
+    async function loadPreview() {
+      setIsPublicCollectionLoading(true);
+      setPublicCollectionError(null);
+
+      const result = await loadPublicCollectionPreview(viewedUserId, 8);
+
+      if (!isMounted) return;
+
+      setPublicCollectionRecords(result.records);
+      setPublicCollectionError(result.error ?? null);
+      setIsPublicCollectionLoading(false);
+    }
+
+    void loadPreview();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isOwnProfile, targetUserId]);
 
   async function onToggleFollow() {
     if (!targetUserId || isOwnProfile || isFollowActionLoading) {
@@ -371,51 +407,92 @@ export function ProfileScreen({
         </View>
       </View>
 
-      <View style={styles.statsRow}>
-        <StatCard value={records.length} label="Records" />
-        <StatCard value={wishlist.length} label="Wishlist" />
-        <StatCard value={unlockedBadgeCount} label="Badges" />
-      </View>
-
-      <CollectionAnalyticsDashboard analytics={analytics} />
-
-      <Text style={styles.sectionTitle}>Achievements</Text>
-      {achievementCategories.map((category) => (
-        <View key={category.title} style={styles.achievementCategory}>
-          <Text style={styles.achievementCategoryTitle}>{category.title}</Text>
-          <View style={styles.achievementGrid}>
-            {category.badges.map((badge) => (
-              <AchievementBadgeCard key={badge.id} badge={badge} />
-            ))}
+      {isOwnProfile ? (
+        <>
+          <View style={styles.statsRow}>
+            <StatCard value={records.length} label="Records" />
+            <StatCard value={wishlist.length} label="Wishlist" />
+            <StatCard value={unlockedBadgeCount} label="Badges" />
           </View>
-        </View>
-      ))}
 
-      <Text style={styles.sectionTitle}>Recent Activity</Text>
-      {activity.length === 0 ? (
-        <View style={styles.emptyFeatureCard}>
-          <Text style={styles.emptyFeatureTitle}>No activity yet</Text>
-          <Text style={styles.emptyFeatureText}>Start building your collection</Text>
-        </View>
+          <CollectionAnalyticsDashboard analytics={analytics} />
+
+          <Text style={styles.sectionTitle}>Achievements</Text>
+          {achievementCategories.map((category) => (
+            <View key={category.title} style={styles.achievementCategory}>
+              <Text style={styles.achievementCategoryTitle}>{category.title}</Text>
+              <View style={styles.achievementGrid}>
+                {category.badges.map((badge) => (
+                  <AchievementBadgeCard key={badge.id} badge={badge} />
+                ))}
+              </View>
+            </View>
+          ))}
+
+          <Text style={styles.sectionTitle}>Recent Activity</Text>
+          {activity.length === 0 ? (
+            <View style={styles.emptyFeatureCard}>
+              <Text style={styles.emptyFeatureTitle}>No activity yet</Text>
+              <Text style={styles.emptyFeatureText}>Start building your collection</Text>
+            </View>
+          ) : (
+            activity.slice(0, 6).map((item, index) => (
+              <View key={index} style={styles.activityCard}>
+                <Text style={styles.activityText}>• {item}</Text>
+              </View>
+            ))
+          )}
+
+          <View style={styles.signOutSection}>
+            <Pressable
+              style={styles.signOutButton}
+              onPress={() => {
+                void signOut();
+              }}
+              hitSlop={8}
+            >
+              <Text style={styles.signOutButtonText}>Sign Out</Text>
+            </Pressable>
+          </View>
+        </>
       ) : (
-        activity.slice(0, 6).map((item, index) => (
-          <View key={index} style={styles.activityCard}>
-            <Text style={styles.activityText}>• {item}</Text>
-          </View>
-        ))
-      )}
+        <>
+          <Text style={styles.sectionTitle}>Public Collection Preview</Text>
 
-      <View style={styles.signOutSection}>
-        <Pressable
-          style={styles.signOutButton}
-          onPress={() => {
-            void signOut();
-          }}
-          hitSlop={8}
-        >
-          <Text style={styles.signOutButtonText}>Sign Out</Text>
-        </Pressable>
-      </View>
+          {isPublicCollectionLoading ? (
+            <View style={styles.emptyFeatureCard}>
+              <Text style={styles.emptyFeatureText}>Loading records...</Text>
+            </View>
+          ) : null}
+
+          {!isPublicCollectionLoading && publicCollectionError ? (
+            <View style={styles.emptyFeatureCard}>
+              <Text style={styles.emptyFeatureTitle}>Preview unavailable</Text>
+              <Text style={styles.emptyFeatureText}>{publicCollectionError}</Text>
+            </View>
+          ) : null}
+
+          {!isPublicCollectionLoading && !publicCollectionError && publicCollectionRecords.length === 0 ? (
+            <View style={styles.emptyFeatureCard}>
+              <Text style={styles.emptyFeatureTitle}>No public records yet.</Text>
+            </View>
+          ) : null}
+
+          {!isPublicCollectionLoading && !publicCollectionError
+            ? publicCollectionRecords.map((record) => (
+                <View key={record.id} style={styles.publicRecordCard}>
+                  <View style={styles.publicRecordInfo}>
+                    <Image source={{ uri: record.cover }} style={styles.publicRecordCover} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.publicRecordAlbum}>{record.album}</Text>
+                      <Text style={styles.publicRecordArtist}>{record.artist}</Text>
+                    </View>
+                  </View>
+                </View>
+              ))
+            : null}
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -664,6 +741,36 @@ const styles = StyleSheet.create({
   activityText: {
     color: "#A7A1BD",
     fontSize: 13,
+  },
+  publicRecordCard: {
+    backgroundColor: "#1A1830",
+    borderWidth: 1,
+    borderColor: "#3E3B5C",
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 10,
+  },
+  publicRecordInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  publicRecordCover: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: "rgba(124, 58, 237, 0.20)",
+    flexShrink: 0,
+  },
+  publicRecordAlbum: {
+    color: "#FFF4D6",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  publicRecordArtist: {
+    color: "#A7A1BD",
+    fontSize: 12,
+    marginTop: 2,
   },
   signOutSection: {
     marginTop: 36,

@@ -835,7 +835,16 @@ export default function App() {
           setScreen("Stores");
         }} />
         <NavItem label="Wishlist" active={screen === "Wishlist"} onPress={() => setScreen("Wishlist")} />
-        <NavItem label="Profile" active={screen === "Profile"} onPress={() => setScreen("Profile")} />
+        <NavItem
+          label="Profile"
+          active={screen === "Profile"}
+          onPress={() => {
+            setSelectedProfileUserId(null);
+            setSelectedProfileDisplayName(null);
+            setProfileBackScreen("Home");
+            setScreen("Profile");
+          }}
+        />
       </View>
 
       <ConfirmPurchaseDetailsModal
