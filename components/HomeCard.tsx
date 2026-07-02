@@ -6,9 +6,10 @@ interface HomeCardProps {
   subtitle: string;
   onPress: () => void;
   accentColor?: string;
+  icon?: string;
 }
 
-export function HomeCard({ title, subtitle, onPress, accentColor }: HomeCardProps) {
+export function HomeCard({ title, subtitle, onPress, accentColor, icon = "♪" }: HomeCardProps) {
   return (
     <Pressable
       style={[
@@ -22,9 +23,18 @@ export function HomeCard({ title, subtitle, onPress, accentColor }: HomeCardProp
       ]}
       onPress={onPress}
     >
-      <View>
-        <Text style={styles.homeCardTitle}>{title}</Text>
-        <Text style={styles.homeCardSubtitle}>{subtitle}</Text>
+      <View style={styles.leftRow}>
+        <View style={[styles.iconWrap, accentColor ? { backgroundColor: `${accentColor}30` } : null]}>
+          <Text style={styles.iconText}>{icon}</Text>
+        </View>
+        <View style={styles.textWrap}>
+          <Text style={styles.homeCardTitle} numberOfLines={1}>
+            {title}
+          </Text>
+          <Text style={styles.homeCardSubtitle} numberOfLines={2}>
+            {subtitle}
+          </Text>
+        </View>
       </View>
       <View style={[styles.arrowWrap, accentColor ? { backgroundColor: `${accentColor}33` } : null]}>
         <Text style={styles.homeArrow}>›</Text>
@@ -37,9 +47,9 @@ const styles = StyleSheet.create({
   homeCard: {
     backgroundColor: "rgba(20, 18, 38, 0.88)",
     borderRadius: 20,
-    paddingVertical: 18,
+    paddingVertical: 14,
     paddingHorizontal: 16,
-    marginBottom: 12,
+    minHeight: 84,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -50,16 +60,40 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
     elevation: 8,
   },
+  leftRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    flex: 1,
+    minWidth: 0,
+  },
+  iconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(124, 58, 237, 0.22)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  iconText: {
+    color: "#f5e9cc",
+    fontSize: 15,
+  },
+  textWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
   homeCardTitle: {
     color: "#fff4d6",
     fontSize: 15,
     fontWeight: "800",
-    marginBottom: 4,
+    marginBottom: 2,
   },
   homeCardSubtitle: {
     color: "#c7c2db",
     fontSize: 11,
-    maxWidth: 180,
+    lineHeight: 15,
   },
   arrowWrap: {
     width: 28,

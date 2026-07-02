@@ -836,51 +836,46 @@ export default function App() {
           <Text style={styles.sectionTitle}>Explore</Text>
 
           <View style={styles.dashboardGrid}>
-            <View style={styles.dashboardGridCell}>
-              <HomeCard
-                title="Find Stores"
-                subtitle="Record shops and crate spots"
-                onPress={() => setScreen("Stores")}
-                accentColor="#14B8A6"
-              />
-            </View>
-            <View style={styles.dashboardGridCell}>
-              <HomeCard
-                title="My Collection"
-                subtitle="Albums you own"
-                onPress={() => setScreen("Collection")}
-                accentColor="#7C3AED"
-              />
-            </View>
-            <View style={styles.dashboardGridCell}>
-              <HomeCard
-                title="Wishlist"
-                subtitle="Records you’re hunting for"
-                onPress={() => setScreen("Wishlist")}
-                accentColor="#EC4899"
-              />
-            </View>
-            <View style={styles.dashboardGridCell}>
-              <HomeCard
-                title="Find Friends"
-                subtitle="Discover and follow collectors"
-                onPress={openDiscoverUsers}
-                accentColor="#F59E0B"
-              />
-            </View>
-            <View style={styles.dashboardGridCellFull}>
-              <HomeCard
-                title="Profile"
-                subtitle="Stats, badges, and recent activity"
-                onPress={() => {
-                  setSelectedProfileUserId(null);
-                  setSelectedProfileDisplayName(null);
-                  setProfileBackScreen("Home");
-                  setScreen("Profile");
-                }}
-                accentColor="#A78BFA"
-              />
-            </View>
+            <HomeCard
+              title="Find Stores"
+              subtitle="Record shops and crate spots"
+              icon="📍"
+              onPress={() => setScreen("Stores")}
+              accentColor="#14B8A6"
+            />
+            <HomeCard
+              title="My Collection"
+              subtitle="Albums you own"
+              icon="💿"
+              onPress={() => setScreen("Collection")}
+              accentColor="#7C3AED"
+            />
+            <HomeCard
+              title="Wishlist"
+              subtitle="Records to hunt next"
+              icon="💗"
+              onPress={() => setScreen("Wishlist")}
+              accentColor="#EC4899"
+            />
+            <HomeCard
+              title="Find Friends"
+              subtitle="Discover and follow collectors"
+              icon="👥"
+              onPress={openDiscoverUsers}
+              accentColor="#F59E0B"
+            />
+            <HomeCard
+              title="Profile"
+              subtitle="Stats, badges, and activity"
+              icon="⭐"
+              onPress={() => {
+                setSelectedProfileUserId(null);
+                setSelectedProfileDisplayName(null);
+                setProfileBackScreen("Home");
+                setScreen("Profile");
+              }}
+              accentColor="#A78BFA"
+            />
           </View>
 
           <View style={styles.followingActivityHeaderRow}>
@@ -1292,16 +1287,8 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   dashboardGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
     gap: 10,
-    marginBottom: 8,
-  },
-  dashboardGridCell: {
-    width: "48.5%",
-  },
-  dashboardGridCellFull: {
-    width: "100%",
+    marginBottom: 12,
   },
   statCard: {
     flex: 1,
