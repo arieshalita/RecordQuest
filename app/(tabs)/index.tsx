@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   SafeAreaView,
   StatusBar,
@@ -71,6 +71,7 @@ const starterRecords: RecordItem[] = [
 const curatedFallbackStores: StoreItem[] = getCuratedFallbackStores();
 
 const STORES_UI_TIMEOUT_MS = 12000;
+const FOLLOWING_FEED_REFRESH_COOLDOWN_MS = 45000;
 
 // ═════════════════════════════════════════════════════════════════════════
 // TODO: ACCOUNTS PHASE – Authentication Integration Points
@@ -148,6 +149,7 @@ export default function App() {
   const [discoverUsersError, setDiscoverUsersError] = useState<string | null>(null);
   const [followingActivity, setFollowingActivity] = useState<FollowingActivityItem[]>([]);
   const [isFollowingActivityLoading, setIsFollowingActivityLoading] = useState(false);
+  const [isFollowingActivityRefreshing, setIsFollowingActivityRefreshing] = useState(false);
   const [followingActivityError, setFollowingActivityError] = useState<string | null>(null);
   const [selectedProfileUserId, setSelectedProfileUserId] = useState<string | null>(null);
   const [selectedProfileDisplayName, setSelectedProfileDisplayName] = useState<string | null>(null);
@@ -160,6 +162,7 @@ export default function App() {
   const [successMessage, setSuccessMessage] = useState("");
   const [successMessageTimer, setSuccessMessageTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
   const didHydrateRef = useRef(false);
+  const lastFollowingFeedLoadRef = useRef(0);
 
   const shouldUseCloudBadgeData = isSupabaseDataModeEnabled() && !!user;
   const badgeRecords = shouldUseCloudBadgeData && recordStateSource !== "cloud" ? [] : records;
@@ -364,30 +367,56 @@ export default function App() {
     return new Date(timestamp).toLocaleDateString();
   }
 
-  useEffect(() => {
-    if (screen !== "Home") return;
+  const openDiscoverUsers = useCallback(() => {
+    setDiscoverSearchText("");
+    setScreen("DiscoverUsers");
+  }, []);
 
-    let isMounted = true;
+  const loadFollowingFeed = useCallback(
+    async (forceRefresh = false) => {
+      if (!user?.id) {
+        setFollowingActivity([]);
+        setFollowingActivityError("You must be signed in to see activity.");
+        setIsFollowingActivityLoading(false);
+        setIsFollowingActivityRefreshing(false);
+        return;
+      }
 
-    async function loadFeed() {
-      setIsFollowingActivityLoading(true);
+      const now = Date.now();
+      const isCooldownActive =
+        !forceRefresh &&
+        followingActivity.length > 0 &&
+        now - lastFollowingFeedLoadRef.current < FOLLOWING_FEED_REFRESH_COOLDOWN_MS;
+
+      if (isCooldownActive) {
+        return;
+      }
+
+      const shouldUseInitialLoading = followingActivity.length === 0 && !forceRefresh;
       setFollowingActivityError(null);
 
-      const result = await loadFollowingActivity(25);
+      if (shouldUseInitialLoading) {
+        setIsFollowingActivityLoading(true);
+      } else {
+        setIsFollowingActivityRefreshing(true);
+      }
 
-      if (!isMounted) return;
+      const result = await loadFollowingActivity(25);
 
       setFollowingActivity(result.items);
       setFollowingActivityError(result.error ?? null);
       setIsFollowingActivityLoading(false);
-    }
+      setIsFollowingActivityRefreshing(false);
+      lastFollowingFeedLoadRef.current = Date.now();
+    },
+    [followingActivity.length, user?.id]
+  );
 
-    void loadFeed();
+  useEffect(() => {
+    if (screen !== "Home") return;
 
-    return () => {
-      isMounted = false;
-    };
-  }, [screen, user?.id]);
+    void loadFollowingFeed(false);
+  }, [loadFollowingFeed, screen]);
 
   // Cleanup success message timer on unmount
   useEffect(() => {
@@ -671,10 +700,7 @@ export default function App() {
           <HomeCard
             title="Find Friends"
             subtitle="Discover users and follow collectors"
-            onPress={() => {
-              setDiscoverSearchText("");
-              setScreen("DiscoverUsers");
-            }}
+            onPress={openDiscoverUsers}
           />
           <HomeCard
             title="Profile"
@@ -687,7 +713,20 @@ export default function App() {
             }}
           />
 
-          <Text style={styles.sectionTitle}>Following Activity</Text>
+          <View style={styles.followingActivityHeaderRow}>
+            <Text style={[styles.sectionTitle, styles.followingActivitySectionTitle]}>Following Activity</Text>
+            <Pressable
+              style={styles.followingActivityRefreshButton}
+              onPress={() => {
+                void loadFollowingFeed(true);
+              }}
+              disabled={isFollowingActivityLoading || isFollowingActivityRefreshing}
+            >
+              <Text style={styles.followingActivityRefreshButtonText}>
+                {isFollowingActivityRefreshing ? "Refreshing..." : "Refresh"}
+              </Text>
+            </Pressable>
+          </View>
 
           {isFollowingActivityLoading ? (
             <View style={styles.activityFeedStateCard}>
@@ -705,7 +744,10 @@ export default function App() {
 
           {!isFollowingActivityLoading && !followingActivityError && followingActivity.length === 0 ? (
             <View style={styles.activityFeedStateCard}>
-              <Text style={styles.activityFeedStateTitle}>Follow collectors to see their activity here.</Text>
+              <Text style={styles.activityFeedStateTitle}>Follow collectors to see what they’re spinning.</Text>
+              <Pressable style={styles.activityFeedEmptyActionButton} onPress={openDiscoverUsers}>
+                <Text style={styles.activityFeedEmptyActionButtonText}>Find Friends</Text>
+              </Pressable>
             </View>
           ) : null}
 
@@ -721,20 +763,27 @@ export default function App() {
                     setScreen("Profile");
                   }}
                 >
-                  {item.cover ? <Image source={{ uri: item.cover }} style={styles.followingActivityCover} /> : null}
-                  <View style={styles.followingActivityTextWrap}>
-                    <Text style={styles.followingActivityUserLine}>
-                      {item.actorDisplayName}
-                      {item.actorUsername ? ` @${item.actorUsername}` : ""}
-                    </Text>
-                    <Text style={styles.followingActivityEntry}>{item.entry}</Text>
-                    {item.album || item.artist ? (
-                      <Text style={styles.followingActivityMeta}>
-                        {[item.album, item.artist].filter(Boolean).join(" - ")}
+                  <View style={styles.followingActivityTopRow}>
+                    <View style={styles.followingActivityIdentityWrap}>
+                      <Text style={styles.followingActivityDisplayName}>{item.actorDisplayName}</Text>
+                      <Text style={styles.followingActivityHandle}>
+                        {item.actorUsername ? `@${item.actorUsername}` : "@recordquest"}
                       </Text>
+                    </View>
+                    <Text style={styles.followingActivityTime}>{formatActivityTime(item.createdAt)}</Text>
+                  </View>
+                  <View style={styles.followingActivityTextWrap}>
+                    <Text style={styles.followingActivityEntry}>{item.entry}</Text>
+                    {item.album || item.artist || item.cover ? (
+                      <View style={styles.followingActivityMediaRow}>
+                        {item.cover ? <Image source={{ uri: item.cover }} style={styles.followingActivityCover} /> : null}
+                        <View style={styles.followingActivityMetaWrap}>
+                          {item.album ? <Text style={styles.followingActivityAlbum}>{item.album}</Text> : null}
+                          {item.artist ? <Text style={styles.followingActivityArtist}>{item.artist}</Text> : null}
+                        </View>
+                      </View>
                     ) : null}
                   </View>
-                  <Text style={styles.followingActivityTime}>{formatActivityTime(item.createdAt)}</Text>
                 </Pressable>
               ))
             : null}
@@ -1125,53 +1174,121 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.20)",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
+    alignItems: "flex-start",
+    gap: 8,
   },
   activityFeedStateTitle: {
     color: "#FFF4D6",
     fontSize: 14,
     fontWeight: "700",
-    flexShrink: 1,
+    lineHeight: 20,
   },
   activityFeedStateText: {
     color: "#A7A1BD",
     fontSize: 12,
-    flexShrink: 1,
+    lineHeight: 18,
+  },
+  activityFeedEmptyActionButton: {
+    marginTop: 4,
+    backgroundColor: "rgba(124, 58, 237, 0.26)",
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.52)",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  activityFeedEmptyActionButtonText: {
+    color: "#E7D8FF",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  followingActivityHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 8,
+    marginBottom: 10,
+  },
+  followingActivitySectionTitle: {
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  followingActivityRefreshButton: {
+    backgroundColor: "rgba(124, 58, 237, 0.26)",
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.52)",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  followingActivityRefreshButtonText: {
+    color: "#E7D8FF",
+    fontSize: 12,
+    fontWeight: "700",
   },
   followingActivityCard: {
     backgroundColor: "rgba(18, 16, 38, 0.96)",
     borderRadius: 18,
-    padding: 12,
+    padding: 13,
     marginBottom: 10,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.20)",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
+    gap: 8,
   },
   followingActivityCover: {
-    width: 44,
-    height: 44,
+    width: 46,
+    height: 46,
     borderRadius: 8,
     backgroundColor: "rgba(124, 58, 237, 0.20)",
     flexShrink: 0,
   },
+  followingActivityTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+  },
+  followingActivityIdentityWrap: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 6,
+    flexWrap: "wrap",
+    flex: 1,
+  },
+  followingActivityDisplayName: {
+    color: "#FFF4D6",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  followingActivityHandle: {
+    color: "#B6AFD8",
+    fontSize: 12,
+    fontWeight: "600",
+  },
   followingActivityTextWrap: {
     flex: 1,
   },
-  followingActivityUserLine: {
-    color: "#FFF4D6",
-    fontSize: 13,
-    fontWeight: "700",
-  },
   followingActivityEntry: {
-    color: "#C7C7D1",
-    fontSize: 12,
+    color: "#D4D1E3",
+    fontSize: 13,
+    lineHeight: 18,
     marginTop: 2,
   },
-  followingActivityMeta: {
+  followingActivityMediaRow: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  followingActivityMetaWrap: {
+    flex: 1,
+  },
+  followingActivityAlbum: {
+    color: "#FFF4D6",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  followingActivityArtist: {
     color: "#A7A1BD",
     fontSize: 11,
     marginTop: 2,
