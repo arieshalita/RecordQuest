@@ -163,6 +163,7 @@ export default function App() {
   const [successMessageTimer, setSuccessMessageTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
   const didHydrateRef = useRef(false);
   const lastFollowingFeedLoadRef = useRef(0);
+  const hasLoadedFollowingFeedRef = useRef(false);
 
   const shouldUseCloudBadgeData = isSupabaseDataModeEnabled() && !!user;
   const badgeRecords = shouldUseCloudBadgeData && recordStateSource !== "cloud" ? [] : records;
@@ -379,20 +380,22 @@ export default function App() {
         setFollowingActivityError("You must be signed in to see activity.");
         setIsFollowingActivityLoading(false);
         setIsFollowingActivityRefreshing(false);
+        hasLoadedFollowingFeedRef.current = false;
+        lastFollowingFeedLoadRef.current = 0;
         return;
       }
 
       const now = Date.now();
       const isCooldownActive =
         !forceRefresh &&
-        followingActivity.length > 0 &&
+        hasLoadedFollowingFeedRef.current &&
         now - lastFollowingFeedLoadRef.current < FOLLOWING_FEED_REFRESH_COOLDOWN_MS;
 
       if (isCooldownActive) {
         return;
       }
 
-      const shouldUseInitialLoading = followingActivity.length === 0 && !forceRefresh;
+      const shouldUseInitialLoading = !hasLoadedFollowingFeedRef.current && !forceRefresh;
       setFollowingActivityError(null);
 
       if (shouldUseInitialLoading) {
@@ -401,15 +404,21 @@ export default function App() {
         setIsFollowingActivityRefreshing(true);
       }
 
-      const result = await loadFollowingActivity(25);
+      try {
+        const result = await loadFollowingActivity(25);
 
-      setFollowingActivity(result.items);
-      setFollowingActivityError(result.error ?? null);
-      setIsFollowingActivityLoading(false);
-      setIsFollowingActivityRefreshing(false);
-      lastFollowingFeedLoadRef.current = Date.now();
+        setFollowingActivity(result.items);
+        setFollowingActivityError(result.error ?? null);
+        hasLoadedFollowingFeedRef.current = true;
+        lastFollowingFeedLoadRef.current = Date.now();
+      } catch {
+        setFollowingActivityError("Activity unavailable.");
+      } finally {
+        setIsFollowingActivityLoading(false);
+        setIsFollowingActivityRefreshing(false);
+      }
     },
-    [followingActivity.length, user?.id]
+    [user?.id]
   );
 
   useEffect(() => {
