@@ -814,6 +814,7 @@ export default function App() {
 
       {screen === "Home" && (
         <ScrollView contentContainerStyle={styles.page}>
+          <View style={styles.pageAtmosphereGlow} />
           <Text style={styles.logo}>RecordQuest</Text>
           <Text style={styles.tagline}>Discover. Collect. Spin.</Text>
 
@@ -834,24 +835,53 @@ export default function App() {
 
           <Text style={styles.sectionTitle}>Explore</Text>
 
-          <HomeCard title="Find Stores" subtitle="Record shops and crate spots" onPress={() => setScreen("Stores")} />
-          <HomeCard title="My Collection" subtitle="Albums you own" onPress={() => setScreen("Collection")} />
-          <HomeCard title="Wishlist" subtitle="Records you’re hunting for" onPress={() => setScreen("Wishlist")} />
-          <HomeCard
-            title="Find Friends"
-            subtitle="Discover users and follow collectors"
-            onPress={openDiscoverUsers}
-          />
-          <HomeCard
-            title="Profile"
-            subtitle="Stats, badges, and activity"
-            onPress={() => {
-              setSelectedProfileUserId(null);
-              setSelectedProfileDisplayName(null);
-              setProfileBackScreen("Home");
-              setScreen("Profile");
-            }}
-          />
+          <View style={styles.dashboardGrid}>
+            <View style={styles.dashboardGridCell}>
+              <HomeCard
+                title="Find Stores"
+                subtitle="Record shops and crate spots"
+                onPress={() => setScreen("Stores")}
+                accentColor="#14B8A6"
+              />
+            </View>
+            <View style={styles.dashboardGridCell}>
+              <HomeCard
+                title="My Collection"
+                subtitle="Albums you own"
+                onPress={() => setScreen("Collection")}
+                accentColor="#7C3AED"
+              />
+            </View>
+            <View style={styles.dashboardGridCell}>
+              <HomeCard
+                title="Wishlist"
+                subtitle="Records you’re hunting for"
+                onPress={() => setScreen("Wishlist")}
+                accentColor="#EC4899"
+              />
+            </View>
+            <View style={styles.dashboardGridCell}>
+              <HomeCard
+                title="Find Friends"
+                subtitle="Discover and follow collectors"
+                onPress={openDiscoverUsers}
+                accentColor="#F59E0B"
+              />
+            </View>
+            <View style={styles.dashboardGridCellFull}>
+              <HomeCard
+                title="Profile"
+                subtitle="Stats, badges, and recent activity"
+                onPress={() => {
+                  setSelectedProfileUserId(null);
+                  setSelectedProfileDisplayName(null);
+                  setProfileBackScreen("Home");
+                  setScreen("Profile");
+                }}
+                accentColor="#A78BFA"
+              />
+            </View>
+          </View>
 
           <View style={styles.followingActivityHeaderRow}>
             <Text style={[styles.sectionTitle, styles.followingActivitySectionTitle]}>Following Activity</Text>
@@ -892,7 +922,7 @@ export default function App() {
           ) : null}
 
           {!isFollowingActivityLoading && !followingActivityError
-            ? followingActivity.slice(0, 8).map((item) => (
+            ? followingActivity.slice(0, 4).map((item) => (
                 <Pressable
                   key={item.id}
                   style={styles.followingActivityCard}
@@ -1185,6 +1215,16 @@ const styles = StyleSheet.create({
   page: {
     padding: 28,
     paddingBottom: 140,
+    backgroundColor: "#050509",
+  },
+  pageAtmosphereGlow: {
+    position: "absolute",
+    top: 12,
+    right: -40,
+    width: 210,
+    height: 210,
+    borderRadius: 105,
+    backgroundColor: "rgba(124, 58, 237, 0.16)",
   },
   logo: {
     color: "#FFF4D6",
@@ -1195,7 +1235,7 @@ const styles = StyleSheet.create({
     letterSpacing: -1.4,
   },
   tagline: {
-    color: "#C4BEE0",
+    color: "#D1C6E8",
     fontSize: 17,
     textAlign: "center",
     marginTop: 12,
@@ -1204,10 +1244,10 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   hero: {
-    backgroundColor: "#120f22",
+    backgroundColor: "rgba(18, 15, 34, 0.92)",
     borderRadius: 30,
-    padding: 34,
-    marginBottom: 36,
+    padding: 28,
+    marginBottom: 28,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.22)",
     shadowColor: "#000",
@@ -1218,12 +1258,12 @@ const styles = StyleSheet.create({
   },
   heroGlow: {
     position: "absolute",
-    top: -24,
-    right: -24,
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: "rgba(124, 58, 237, 0.14)",
+    top: -34,
+    right: -10,
+    width: 170,
+    height: 170,
+    borderRadius: 85,
+    backgroundColor: "rgba(124, 58, 237, 0.18)",
   },
   heroKicker: {
     color: "#d5b9ff",
@@ -1234,22 +1274,34 @@ const styles = StyleSheet.create({
   },
   heroTitle: {
     color: "#fff4d6",
-    fontSize: 35,
+    fontSize: 31,
     fontWeight: "900",
     lineHeight: 44,
     marginBottom: 16,
   },
   heroText: {
     color: "#d6c2a1",
-    fontSize: 16,
-    lineHeight: 27,
+    fontSize: 15,
+    lineHeight: 24,
     maxWidth: "96%",
     fontWeight: "500",
   },
   statsRow: {
     flexDirection: "row",
-    gap: 16,
-    marginBottom: 36,
+    gap: 10,
+    marginBottom: 24,
+  },
+  dashboardGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 8,
+  },
+  dashboardGridCell: {
+    width: "48.5%",
+  },
+  dashboardGridCellFull: {
+    width: "100%",
   },
   statCard: {
     flex: 1,
@@ -1278,9 +1330,9 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     color: "#FFF4D6",
-    fontSize: 23,
+    fontSize: 21,
     fontWeight: "900",
-    marginBottom: 22,
+    marginBottom: 14,
     marginTop: 20,
     letterSpacing: 0.2,
   },
@@ -1318,9 +1370,9 @@ const styles = StyleSheet.create({
     fontWeight: "300",
   },
   activityFeedStateCard: {
-    backgroundColor: "rgba(18, 16, 38, 0.96)",
-    borderRadius: 18,
-    padding: 16,
+    backgroundColor: "rgba(18, 16, 38, 0.86)",
+    borderRadius: 14,
+    padding: 14,
     marginBottom: 12,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.20)",
@@ -1356,8 +1408,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginTop: 8,
-    marginBottom: 10,
+    marginTop: 12,
+    marginBottom: 8,
   },
   followingActivitySectionTitle: {
     marginTop: 0,
@@ -1377,10 +1429,10 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   followingActivityCard: {
-    backgroundColor: "rgba(18, 16, 38, 0.96)",
-    borderRadius: 18,
-    padding: 13,
-    marginBottom: 10,
+    backgroundColor: "rgba(18, 16, 38, 0.84)",
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.20)",
     gap: 8,
@@ -2288,22 +2340,22 @@ const styles = StyleSheet.create({
   },
   nav: {
     position: "absolute",
-    left: 16,
-    right: 16,
-    bottom: 16,
-    height: 84,
-    backgroundColor: "rgba(25, 19, 46, 0.98)",
-    borderRadius: 32,
+    left: 12,
+    right: 12,
+    bottom: 12,
+    height: 76,
+    backgroundColor: "rgba(16, 15, 28, 0.96)",
+    borderRadius: 22,
     borderWidth: 1,
-    borderColor: "rgba(124, 58, 237, 0.22)",
+    borderColor: "rgba(124, 58, 237, 0.24)",
     flexDirection: "row",
     justifyContent: "space-around",
     alignItems: "center",
     shadowColor: "#000",
-    shadowOpacity: 0.30,
-    shadowRadius: 24,
-    elevation: 18,
-    paddingHorizontal: 10,
+    shadowOpacity: 0.24,
+    shadowRadius: 18,
+    elevation: 14,
+    paddingHorizontal: 8,
   },
   navItem: {
     alignItems: "center",

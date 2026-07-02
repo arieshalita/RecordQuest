@@ -1,5 +1,14 @@
 import React from "react";
-import { ScrollView, StyleSheet, Text, TextInput, Pressable, View, ActivityIndicator } from "react-native";
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  Pressable,
+  View,
+  ActivityIndicator,
+  Image,
+} from "react-native";
 import { TopBar } from "../components/TopBar";
 import type { DiscoverUser } from "../hooks/discover-users";
 
@@ -56,22 +65,28 @@ export function DiscoverUsersScreen({
 
       {!isLoading && !errorMessage && users.length === 0 ? (
         <View style={styles.messageCard}>
-          <Text style={styles.messageTitle}>No users found</Text>
-          <Text style={styles.messageText}>Try a different search.</Text>
+          <Text style={styles.messageTitle}>No collectors found yet.</Text>
+          <Text style={styles.messageText}>Invite friends or try a different name or username.</Text>
         </View>
       ) : null}
 
       {!isLoading && !errorMessage
         ? users.map((user) => (
             <Pressable key={user.userId} style={styles.userCard} onPress={() => onOpenUser(user)}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{user.displayName.charAt(0).toUpperCase()}</Text>
-              </View>
+              {user.avatarUrl ? (
+                <Image source={{ uri: user.avatarUrl }} style={styles.avatarImage} />
+              ) : (
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{user.displayName.charAt(0).toUpperCase()}</Text>
+                </View>
+              )}
               <View style={styles.userInfo}>
                 <Text style={styles.userName}>{user.displayName}</Text>
                 <Text style={styles.userHandle}>{user.username ? `@${user.username}` : "@recordquest"}</Text>
               </View>
-              <Text style={styles.viewText}>View</Text>
+              <View style={styles.viewPill}>
+                <Text style={styles.viewText}>View</Text>
+              </View>
             </Pressable>
           ))
         : null}
@@ -81,24 +96,25 @@ export function DiscoverUsersScreen({
 
 const styles = StyleSheet.create({
   page: {
-    padding: 26,
+    padding: 22,
     paddingBottom: 160,
+    backgroundColor: "#050509",
   },
   subtitle: {
-    color: "#C4BEE0",
+    color: "#CFC7E6",
     fontSize: 14,
-    marginBottom: 14,
+    marginBottom: 12,
     lineHeight: 20,
   },
   searchInput: {
-    backgroundColor: "rgba(30, 26, 50, 0.98)",
+    backgroundColor: "rgba(20, 18, 38, 0.94)",
     color: "#f3e7ce",
-    borderRadius: 26,
+    borderRadius: 16,
     padding: 15,
     fontSize: 14,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: "rgba(104, 79, 191, 0.26)",
+    borderColor: "rgba(124, 58, 237, 0.30)",
     fontWeight: "500",
   },
   loadingRow: {
@@ -113,13 +129,13 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   messageCard: {
-    borderWidth: 2,
-    borderStyle: "dashed",
-    borderColor: "#3E3B5C",
-    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.24)",
+    borderRadius: 16,
     padding: 22,
     alignItems: "center",
     marginTop: 10,
+    backgroundColor: "rgba(20, 18, 38, 0.84)",
   },
   messageTitle: {
     color: "#FFF4D6",
@@ -134,10 +150,12 @@ const styles = StyleSheet.create({
   },
   retryButton: {
     marginTop: 12,
-    backgroundColor: "#3E3B5C",
+    backgroundColor: "rgba(124, 58, 237, 0.25)",
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.48)",
   },
   retryButtonText: {
     color: "#FFF4D6",
@@ -145,15 +163,19 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   userCard: {
-    backgroundColor: "rgba(18, 16, 38, 0.96)",
-    borderRadius: 18,
+    backgroundColor: "rgba(20, 18, 38, 0.90)",
+    borderRadius: 16,
     padding: 14,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: "rgba(124, 58, 237, 0.20)",
+    borderColor: "rgba(124, 58, 237, 0.28)",
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    elevation: 6,
   },
   avatar: {
     width: 44,
@@ -162,6 +184,14 @@ const styles = StyleSheet.create({
     backgroundColor: "#7C3AED",
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
+  },
+  avatarImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.38)",
     flexShrink: 0,
   },
   avatarText: {
@@ -182,8 +212,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
+  viewPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(212, 175, 55, 0.45)",
+    backgroundColor: "rgba(212, 175, 55, 0.16)",
+  },
   viewText: {
-    color: "#D6C2A1",
+    color: "#F2D188",
     fontSize: 12,
     fontWeight: "700",
   },

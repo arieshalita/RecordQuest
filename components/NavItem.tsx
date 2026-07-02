@@ -19,21 +19,22 @@ export function NavItem({ label, active, onPress }: NavItemProps) {
 const styles = StyleSheet.create({
   navItem: {
     flex: 1,
-    flexDirection: "row",
+    flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    borderRadius: 14,
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderRadius: 12,
+    minWidth: 0,
   },
   navItemActive: {
-    backgroundColor: "rgba(124, 58, 237, 0.18)",
+    backgroundColor: "rgba(124, 58, 237, 0.24)",
   },
   navDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: "#57516C",
   },
   navDotActive: {
@@ -41,9 +42,10 @@ const styles = StyleSheet.create({
   },
   navText: {
     color: "#a7a1bd",
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "700",
-    lineHeight: 10,
+    lineHeight: 13,
+    textAlign: "center",
   },
   navTextActive: {
     color: "#fff4d6",

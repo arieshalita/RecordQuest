@@ -5,46 +5,73 @@ interface HomeCardProps {
   title: string;
   subtitle: string;
   onPress: () => void;
+  accentColor?: string;
 }
 
-export function HomeCard({ title, subtitle, onPress }: HomeCardProps) {
+export function HomeCard({ title, subtitle, onPress, accentColor }: HomeCardProps) {
   return (
-    <Pressable style={styles.homeCard} onPress={onPress}>
+    <Pressable
+      style={[
+        styles.homeCard,
+        accentColor
+          ? {
+              borderColor: accentColor,
+              backgroundColor: `${accentColor}22`,
+            }
+          : null,
+      ]}
+      onPress={onPress}
+    >
       <View>
         <Text style={styles.homeCardTitle}>{title}</Text>
         <Text style={styles.homeCardSubtitle}>{subtitle}</Text>
       </View>
-      <Text style={styles.homeArrow}>›</Text>
+      <View style={[styles.arrowWrap, accentColor ? { backgroundColor: `${accentColor}33` } : null]}>
+        <Text style={styles.homeArrow}>›</Text>
+      </View>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   homeCard: {
-    backgroundColor: "rgba(18, 16, 38, 0.60)",
-    borderRadius: 24,
-    paddingVertical: 24,
-    paddingHorizontal: 20,
-    marginBottom: 16,
+    backgroundColor: "rgba(20, 18, 38, 0.88)",
+    borderRadius: 20,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    marginBottom: 12,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "rgba(124, 58, 237, 0.10)",
+    borderColor: "rgba(124, 58, 237, 0.24)",
+    shadowColor: "#000",
+    shadowOpacity: 0.2,
+    shadowRadius: 14,
+    elevation: 8,
   },
   homeCardTitle: {
     color: "#fff4d6",
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "800",
     marginBottom: 4,
   },
   homeCardSubtitle: {
-    color: "#a7a1bd",
-    fontSize: 12,
+    color: "#c7c2db",
+    fontSize: 11,
+    maxWidth: 180,
+  },
+  arrowWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(124, 58, 237, 0.20)",
   },
   homeArrow: {
-    color: "#d4af37",
-    fontSize: 24,
-    fontWeight: "600",
+    color: "#fff4d6",
+    fontSize: 20,
+    fontWeight: "700",
   },
 });

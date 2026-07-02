@@ -62,6 +62,8 @@ export function RecordListScreen({
   isWishlist = false,
 }: RecordListScreenProps) {
   const albumQueryLength = album.trim().length;
+  const accentColor = isWishlist ? "#EC4899" : "#7C3AED";
+  const accentBorderColor = isWishlist ? "rgba(236, 72, 153, 0.40)" : "rgba(124, 58, 237, 0.38)";
   const displayedSuggestions = selectedMetadata ? [] : searchResults.slice(0, 5);
   const shouldShowSuggestions = albumQueryLength >= 2 && displayedSuggestions.length > 0;
   const shouldShowLoading = albumQueryLength >= 2 && !selectedMetadata && isSearching;
@@ -84,7 +86,14 @@ export function RecordListScreen({
       <TopBar title={title} back={back} />
       <Text style={styles.screenSubtitle}>{subtitle}</Text>
 
-      <View style={styles.addPanel}>
+      <View
+        style={[
+          styles.addPanel,
+          {
+            borderColor: accentBorderColor,
+          },
+        ]}
+      >
         <View style={styles.searchRow}>
           <TextInput
             style={[styles.input, styles.albumInput]}
@@ -93,7 +102,10 @@ export function RecordListScreen({
             value={album}
             onChangeText={onAlbumChange}
           />
-          <Pressable style={styles.searchButton} onPress={onSearch}>
+          <Pressable
+            style={[styles.searchButton, { backgroundColor: accentColor, borderColor: accentBorderColor }]}
+            onPress={onSearch}
+          >
             <Text style={styles.searchButtonText}>Search</Text>
           </Pressable>
         </View>
@@ -158,7 +170,7 @@ export function RecordListScreen({
         )}
 
         {selectedMetadata ? (
-          <View style={styles.selectedCard}>
+          <View style={[styles.selectedCard, { borderColor: accentBorderColor }] }>
             <View style={styles.selectedContentRow}>
               <Image
                 source={{
@@ -187,7 +199,10 @@ export function RecordListScreen({
 
         {addFormMessage ? <Text style={styles.addFormMessage}>{addFormMessage}</Text> : null}
 
-        <Pressable style={styles.addButton} onPress={onAdd}>
+        <Pressable
+          style={[styles.addButton, { backgroundColor: accentColor, borderColor: accentBorderColor }]}
+          onPress={onAdd}
+        >
           <Text style={styles.addButtonText}>Add</Text>
         </Pressable>
       </View>
@@ -218,7 +233,13 @@ export function RecordListScreen({
             </Pressable>
             <View style={styles.cardActions}>
               {onFound && (
-                <Pressable style={styles.foundButton} onPress={() => onFound(record)}>
+                <Pressable
+                  style={[
+                    styles.foundButton,
+                    isWishlist ? styles.foundButtonWishlist : null,
+                  ]}
+                  onPress={() => onFound(record)}
+                >
                   <Text style={styles.foundText}>Found</Text>
                 </Pressable>
               )}
@@ -237,8 +258,9 @@ export function RecordListScreen({
 
 const styles = StyleSheet.create({
   page: {
-    padding: 26,
+    padding: 22,
     paddingBottom: 130,
+    backgroundColor: "#050509",
   },
   screenSubtitle: {
     color: "#D6C2A1",
@@ -246,6 +268,11 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   addPanel: {
+    backgroundColor: "rgba(17, 16, 30, 0.86)",
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.22)",
     marginBottom: 32,
   },
   searchRow: {
@@ -254,11 +281,11 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   input: {
-    backgroundColor: "#1A1830",
+    backgroundColor: "rgba(20, 18, 38, 0.94)",
     borderWidth: 1,
-    borderColor: "#3E3B5C",
-    borderRadius: 8,
-    padding: 14,
+    borderColor: "rgba(124, 58, 237, 0.28)",
+    borderRadius: 12,
+    padding: 13,
     color: "#FFF4D6",
     fontSize: 14,
     marginBottom: 14,
@@ -269,11 +296,12 @@ const styles = StyleSheet.create({
   searchButton: {
     backgroundColor: "#7C3AED",
     paddingHorizontal: 18,
-    paddingVertical: 14,
-    borderRadius: 8,
+    paddingVertical: 13,
+    borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 14,
+    borderWidth: 1,
   },
   searchButtonText: {
     color: "#FFF4D6",
@@ -291,10 +319,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   dropdownCard: {
-    backgroundColor: "#1A1830",
+    backgroundColor: "rgba(20, 18, 38, 0.94)",
     borderWidth: 1,
-    borderColor: "#3E3B5C",
-    borderRadius: 10,
+    borderColor: "rgba(124, 58, 237, 0.26)",
+    borderRadius: 12,
     padding: 10,
     marginBottom: 12,
   },
@@ -315,10 +343,10 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   selectedCard: {
-    backgroundColor: "#1A1830",
+    backgroundColor: "rgba(20, 18, 38, 0.94)",
     borderWidth: 1,
-    borderColor: "#7C3AED",
-    borderRadius: 8,
+    borderColor: "rgba(124, 58, 237, 0.40)",
+    borderRadius: 12,
     padding: 12,
     marginBottom: 12,
   },
@@ -361,10 +389,10 @@ const styles = StyleSheet.create({
   },
   resultCard: {
     flexDirection: "row",
-    backgroundColor: "#1A1830",
+    backgroundColor: "rgba(20, 18, 38, 0.90)",
     borderWidth: 1,
-    borderColor: "#3E3B5C",
-    borderRadius: 8,
+    borderColor: "rgba(124, 58, 237, 0.24)",
+    borderRadius: 12,
     padding: 8,
     gap: 10,
     marginBottom: 8,
@@ -401,9 +429,10 @@ const styles = StyleSheet.create({
   },
   addButton: {
     backgroundColor: "#7C3AED",
-    paddingVertical: 14,
-    borderRadius: 8,
+    paddingVertical: 13,
+    borderRadius: 12,
     alignItems: "center",
+    borderWidth: 1,
   },
   addButtonText: {
     color: "#FFF4D6",
@@ -411,21 +440,27 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   addFormMessage: {
-    color: "#E7B4B4",
+    color: "#FFD9D9",
     fontSize: 12,
     marginBottom: 10,
     lineHeight: 18,
+    borderWidth: 1,
+    borderColor: "rgba(236, 72, 153, 0.34)",
+    backgroundColor: "rgba(236, 72, 153, 0.16)",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   recordCard: {
     flexDirection: "row",
-    backgroundColor: "#1A1830",
+    backgroundColor: "rgba(20, 18, 38, 0.92)",
     borderWidth: 1,
-    borderColor: "#3E3B5C",
-    borderRadius: 8,
-    padding: 16,
+    borderColor: "rgba(124, 58, 237, 0.24)",
+    borderRadius: 14,
+    padding: 12,
     gap: 14,
-    marginBottom: 16,
-    alignItems: "center",
+    marginBottom: 12,
+    alignItems: "flex-start",
   },
   cardInfo: {
     flexDirection: "row",
@@ -434,13 +469,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   cover: {
-    width: 60,
-    height: 60,
-    borderRadius: 6,
+    width: 64,
+    height: 64,
+    borderRadius: 10,
   },
   albumTitle: {
     color: "#FFF4D6",
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "600",
   },
   artistName: {
@@ -455,24 +490,31 @@ const styles = StyleSheet.create({
   },
   cardActions: {
     flexDirection: "row",
-    gap: 10,
+    gap: 8,
+    alignSelf: "center",
   },
   foundButton: {
-    backgroundColor: "#7C3AED",
+    backgroundColor: "rgba(124, 58, 237, 0.24)",
     paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 6,
+    paddingVertical: 9,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.52)",
+  },
+  foundButtonWishlist: {
+    backgroundColor: "rgba(236, 72, 153, 0.18)",
+    borderColor: "rgba(236, 72, 153, 0.48)",
   },
   foundText: {
-    color: "#FFF4D6",
+    color: "#FFD9EE",
     fontSize: 12,
     fontWeight: "600",
   },
   removeButton: {
-    backgroundColor: "rgba(62, 59, 92, 0.5)",
+    backgroundColor: "rgba(62, 59, 92, 0.38)",
     paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 6,
+    paddingVertical: 9,
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: "rgba(62, 59, 92, 0.6)",
   },
