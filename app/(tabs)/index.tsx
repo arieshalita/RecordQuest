@@ -44,6 +44,7 @@ import {
   type StoreDiscoveryResult,
 } from "../../hooks/store-discovery";
 import { getDiscoverUsers, type DiscoverUser } from "../../hooks/discover-users";
+import { loadFollowingActivity, type FollowingActivityItem } from "../../hooks/following-activity";
 
 const starterRecords: RecordItem[] = [
   {
@@ -145,6 +146,9 @@ export default function App() {
   const [discoverSearchText, setDiscoverSearchText] = useState("");
   const [isDiscoverUsersLoading, setIsDiscoverUsersLoading] = useState(false);
   const [discoverUsersError, setDiscoverUsersError] = useState<string | null>(null);
+  const [followingActivity, setFollowingActivity] = useState<FollowingActivityItem[]>([]);
+  const [isFollowingActivityLoading, setIsFollowingActivityLoading] = useState(false);
+  const [followingActivityError, setFollowingActivityError] = useState<string | null>(null);
   const [selectedProfileUserId, setSelectedProfileUserId] = useState<string | null>(null);
   const [selectedProfileDisplayName, setSelectedProfileDisplayName] = useState<string | null>(null);
   const [profileBackScreen, setProfileBackScreen] = useState<"Home" | "DiscoverUsers">("Home");
@@ -340,6 +344,50 @@ export default function App() {
         );
       })
     : discoverUsers;
+
+  function formatActivityTime(value: string): string {
+    const timestamp = Date.parse(value);
+    if (Number.isNaN(timestamp)) return "Recently";
+
+    const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+    if (seconds < 60) return "Just now";
+
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d ago`;
+
+    return new Date(timestamp).toLocaleDateString();
+  }
+
+  useEffect(() => {
+    if (screen !== "Home") return;
+
+    let isMounted = true;
+
+    async function loadFeed() {
+      setIsFollowingActivityLoading(true);
+      setFollowingActivityError(null);
+
+      const result = await loadFollowingActivity(25);
+
+      if (!isMounted) return;
+
+      setFollowingActivity(result.items);
+      setFollowingActivityError(result.error ?? null);
+      setIsFollowingActivityLoading(false);
+    }
+
+    void loadFeed();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [screen, user?.id]);
 
   // Cleanup success message timer on unmount
   useEffect(() => {
@@ -638,6 +686,58 @@ export default function App() {
               setScreen("Profile");
             }}
           />
+
+          <Text style={styles.sectionTitle}>Following Activity</Text>
+
+          {isFollowingActivityLoading ? (
+            <View style={styles.activityFeedStateCard}>
+              <ActivityIndicator size="small" color="#A78BFA" />
+              <Text style={styles.activityFeedStateText}>Loading activity...</Text>
+            </View>
+          ) : null}
+
+          {!isFollowingActivityLoading && followingActivityError ? (
+            <View style={styles.activityFeedStateCard}>
+              <Text style={styles.activityFeedStateTitle}>Activity unavailable.</Text>
+              <Text style={styles.activityFeedStateText}>{followingActivityError}</Text>
+            </View>
+          ) : null}
+
+          {!isFollowingActivityLoading && !followingActivityError && followingActivity.length === 0 ? (
+            <View style={styles.activityFeedStateCard}>
+              <Text style={styles.activityFeedStateTitle}>Follow collectors to see their activity here.</Text>
+            </View>
+          ) : null}
+
+          {!isFollowingActivityLoading && !followingActivityError
+            ? followingActivity.slice(0, 8).map((item) => (
+                <Pressable
+                  key={item.id}
+                  style={styles.followingActivityCard}
+                  onPress={() => {
+                    setSelectedProfileUserId(item.actorUserId);
+                    setSelectedProfileDisplayName(item.actorDisplayName);
+                    setProfileBackScreen("Home");
+                    setScreen("Profile");
+                  }}
+                >
+                  {item.cover ? <Image source={{ uri: item.cover }} style={styles.followingActivityCover} /> : null}
+                  <View style={styles.followingActivityTextWrap}>
+                    <Text style={styles.followingActivityUserLine}>
+                      {item.actorDisplayName}
+                      {item.actorUsername ? ` @${item.actorUsername}` : ""}
+                    </Text>
+                    <Text style={styles.followingActivityEntry}>{item.entry}</Text>
+                    {item.album || item.artist ? (
+                      <Text style={styles.followingActivityMeta}>
+                        {[item.album, item.artist].filter(Boolean).join(" - ")}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <Text style={styles.followingActivityTime}>{formatActivityTime(item.createdAt)}</Text>
+                </Pressable>
+              ))
+            : null}
         </ScrollView>
       )}
 
@@ -1017,6 +1117,69 @@ const styles = StyleSheet.create({
     color: "#d6c0ff",
     fontSize: 28,
     fontWeight: "300",
+  },
+  activityFeedStateCard: {
+    backgroundColor: "rgba(18, 16, 38, 0.96)",
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.20)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  activityFeedStateTitle: {
+    color: "#FFF4D6",
+    fontSize: 14,
+    fontWeight: "700",
+    flexShrink: 1,
+  },
+  activityFeedStateText: {
+    color: "#A7A1BD",
+    fontSize: 12,
+    flexShrink: 1,
+  },
+  followingActivityCard: {
+    backgroundColor: "rgba(18, 16, 38, 0.96)",
+    borderRadius: 18,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.20)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  followingActivityCover: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: "rgba(124, 58, 237, 0.20)",
+    flexShrink: 0,
+  },
+  followingActivityTextWrap: {
+    flex: 1,
+  },
+  followingActivityUserLine: {
+    color: "#FFF4D6",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  followingActivityEntry: {
+    color: "#C7C7D1",
+    fontSize: 12,
+    marginTop: 2,
+  },
+  followingActivityMeta: {
+    color: "#A7A1BD",
+    fontSize: 11,
+    marginTop: 2,
+  },
+  followingActivityTime: {
+    color: "#8F8AA6",
+    fontSize: 11,
+    fontWeight: "600",
   },
   topBar: {
     flexDirection: "row",
