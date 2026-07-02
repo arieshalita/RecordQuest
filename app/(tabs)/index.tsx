@@ -72,6 +72,8 @@ const curatedFallbackStores: StoreItem[] = getCuratedFallbackStores();
 
 const STORES_UI_TIMEOUT_MS = 12000;
 const FOLLOWING_FEED_REFRESH_COOLDOWN_MS = 45000;
+const ALBUM_TYPEAHEAD_MIN_CHARS = 2;
+const ALBUM_TYPEAHEAD_DEBOUNCE_MS = 380;
 
 // ═════════════════════════════════════════════════════════════════════════
 // TODO: ACCOUNTS PHASE – Authentication Integration Points
@@ -126,6 +128,7 @@ export default function App() {
   const [purchasedAt, setPurchasedAt] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [searchMessage, setSearchMessage] = useState("");
+  const [addFormMessage, setAddFormMessage] = useState("");
   const [activity, setActivity] = useState<string[]>([
     "Added Random Access Memories",
     "Started your RecordQuest collection",
@@ -164,6 +167,7 @@ export default function App() {
   const didHydrateRef = useRef(false);
   const lastFollowingFeedLoadRef = useRef(0);
   const hasLoadedFollowingFeedRef = useRef(false);
+  const suppressNextTypeaheadRef = useRef(false);
 
   const shouldUseCloudBadgeData = isSupabaseDataModeEnabled() && !!user;
   const badgeRecords = shouldUseCloudBadgeData && recordStateSource !== "cloud" ? [] : records;
@@ -445,12 +449,58 @@ export default function App() {
     setSuccessMessageTimer(timer);
   }
 
+  function normalizeDuplicateValue(value: string): string {
+    return value
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function hasDuplicateRecord(list: RecordItem[], albumName: string, artistName: string): boolean {
+    const normalizedAlbum = normalizeDuplicateValue(albumName);
+    const normalizedArtist = normalizeDuplicateValue(artistName);
+
+    if (!normalizedAlbum || !normalizedArtist) {
+      return false;
+    }
+
+    return list.some((item) => {
+      const itemAlbum = normalizeDuplicateValue(item.album);
+      const itemArtist = normalizeDuplicateValue(item.artist);
+      return itemAlbum === normalizedAlbum && itemArtist === normalizedArtist;
+    });
+  }
+
   async function addRecord(toWishlist: boolean) {
     const trimmedAlbum = album.trim();
     const trimmedArtist = artist.trim();
     
     if (!trimmedAlbum || !trimmedArtist) {
-      setSearchMessage("Please enter both album name and artist.");
+      setAddFormMessage("Please enter both album name and artist.");
+      return;
+    }
+
+    if (!toWishlist && hasDuplicateRecord(records, trimmedAlbum, trimmedArtist)) {
+      setSearchMessage(
+        ""
+      );
+      setAddFormMessage("This album is already in your collection.");
+      return;
+    }
+
+    if (toWishlist && hasDuplicateRecord(wishlist, trimmedAlbum, trimmedArtist)) {
+      setSearchMessage("");
+      setAddFormMessage("This album is already in your wishlist.");
+      return;
+    }
+
+    if (toWishlist && hasDuplicateRecord(records, trimmedAlbum, trimmedArtist)) {
+      setSearchMessage("");
+      setAddFormMessage(
+        "This album is already in your collection, so it does not need to be added to your wishlist."
+      );
       return;
     }
 
@@ -494,41 +544,99 @@ export default function App() {
     setSearchResults([]);
     setSelectedMetadata(null);
     setSearchMessage("");
+    setAddFormMessage("");
   }
 
-  async function searchAlbum() {
-    if (!album.trim()) {
+  async function runAlbumSearch(queryAlbum: string, queryArtist: string, manualSearch = false) {
+    const trimmedAlbum = queryAlbum.trim();
+
+    if (!trimmedAlbum) {
       setSearchResults([]);
       setSelectedMetadata(null);
-      setSearchMessage("Type an album title to search.");
+      setSearchMessage("");
+      return;
+    }
+
+    if (trimmedAlbum.length < ALBUM_TYPEAHEAD_MIN_CHARS) {
+      setSearchResults([]);
+      setSearchMessage("");
       return;
     }
 
     setIsSearching(true);
     setSearchMessage("");
-    const results = await searchAlbumResults(album, artist);
-    setSearchResults(results);
-    setSelectedMetadata(null);
-    setIsSearching(false);
 
-    if (!results.length) {
-      setSearchMessage("No matches found. You can still add the record manually.");
+    try {
+      const results = await searchAlbumResults(trimmedAlbum, queryArtist);
+      setSearchResults(results);
+
+      if (!results.length) {
+        setSearchMessage("No results found.");
+      }
+    } catch (error) {
+      console.warn("Album search request failed:", error);
+      setSearchResults([]);
+      setSearchMessage("Search unavailable. You can still add manually.");
+    } finally {
+      setIsSearching(false);
     }
   }
+
+  async function searchAlbum() {
+    await runAlbumSearch(album, artist, true);
+  }
+
+  useEffect(() => {
+    if (screen !== "Collection" && screen !== "Wishlist") {
+      return;
+    }
+
+    const trimmedAlbum = album.trim();
+    if (!trimmedAlbum) {
+      setSearchResults([]);
+      setSearchMessage("");
+      return;
+    }
+
+    if (suppressNextTypeaheadRef.current) {
+      suppressNextTypeaheadRef.current = false;
+      return;
+    }
+
+    if (trimmedAlbum.length < ALBUM_TYPEAHEAD_MIN_CHARS) {
+      setSearchResults([]);
+      setSearchMessage("");
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      void runAlbumSearch(trimmedAlbum, artist, false);
+    }, ALBUM_TYPEAHEAD_DEBOUNCE_MS);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [album, artist, screen]);
 
   function handleAlbumInputChange(value: string) {
     setAlbum(value);
     // Clear all search/selection state when user starts typing
     setSelectedMetadata(null);
-    setSearchResults([]);
+    if (value.trim().length < ALBUM_TYPEAHEAD_MIN_CHARS) {
+      setSearchResults([]);
+    }
     setSearchMessage("");
+    setAddFormMessage("");
   }
 
   function handleArtistChange(value: string) {
     setArtist(value);
     setSelectedMetadata(null);
-    setSearchResults([]);
+    if (album.trim().length < ALBUM_TYPEAHEAD_MIN_CHARS) {
+      setSearchResults([]);
+    }
     setSearchMessage("");
+    setAddFormMessage("");
   }
 
   function markFound(item: RecordItem) {
@@ -812,15 +920,17 @@ export default function App() {
           selectedMetadata={selectedMetadata}
           isSearching={isSearching}
           searchMessage={searchMessage}
+          addFormMessage={addFormMessage}
           onAlbumChange={handleAlbumInputChange}
           onArtistChange={handleArtistChange}
           onSearch={searchAlbum}
           onSelectResult={(result) => {
+            suppressNextTypeaheadRef.current = true;
             setAlbum(result.album);
             setArtist(result.artist);
             setSelectedMetadata(result);
             setSearchResults([]);
-            setSearchMessage(`Selected ${result.album}.`);
+            setSearchMessage(`Selected ${result.album}. Album details prefilled.`);
           }}
           onAdd={() => addRecord(false)}
           onRemove={removeRecord}
@@ -842,15 +952,17 @@ export default function App() {
           selectedMetadata={selectedMetadata}
           isSearching={isSearching}
           searchMessage={searchMessage}
+          addFormMessage={addFormMessage}
           onAlbumChange={handleAlbumInputChange}
           onArtistChange={handleArtistChange}
           onSearch={searchAlbum}
           onSelectResult={(result) => {
+            suppressNextTypeaheadRef.current = true;
             setAlbum(result.album);
             setArtist(result.artist);
             setSelectedMetadata(result);
             setSearchResults([]);
-            setSearchMessage(`Selected ${result.album}.`);
+            setSearchMessage(`Selected ${result.album}. Album details prefilled.`);
           }}
           onAdd={() => addRecord(true)}
           onFound={markFound}

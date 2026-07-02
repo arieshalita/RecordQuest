@@ -24,6 +24,7 @@ type RecordListScreenProps = {
   selectedMetadata: AlbumSearchResult | null;
   isSearching: boolean;
   searchMessage: string;
+  addFormMessage: string;
   onAlbumChange: (value: string) => void;
   onArtistChange: (value: string) => void;
   onSearch: () => void;
@@ -48,6 +49,7 @@ export function RecordListScreen({
   selectedMetadata,
   isSearching,
   searchMessage,
+  addFormMessage,
   onAlbumChange,
   onArtistChange,
   onSearch,
@@ -59,6 +61,24 @@ export function RecordListScreen({
   onViewRecord,
   isWishlist = false,
 }: RecordListScreenProps) {
+  const albumQueryLength = album.trim().length;
+  const displayedSuggestions = selectedMetadata ? [] : searchResults.slice(0, 5);
+  const shouldShowSuggestions = albumQueryLength >= 2 && displayedSuggestions.length > 0;
+  const shouldShowLoading = albumQueryLength >= 2 && !selectedMetadata && isSearching;
+  const shouldShowNoResults =
+    albumQueryLength >= 2 &&
+    !selectedMetadata &&
+    !isSearching &&
+    displayedSuggestions.length === 0 &&
+    searchMessage === "No results found.";
+  const shouldShowSearchError =
+    albumQueryLength >= 2 &&
+    !selectedMetadata &&
+    !isSearching &&
+    displayedSuggestions.length === 0 &&
+    searchMessage !== "" &&
+    searchMessage !== "No results found.";
+
   return (
     <ScrollView contentContainerStyle={styles.page}>
       <TopBar title={title} back={back} />
@@ -77,6 +97,49 @@ export function RecordListScreen({
             <Text style={styles.searchButtonText}>Search</Text>
           </Pressable>
         </View>
+
+        {shouldShowLoading ? (
+          <View style={styles.searchStatusRow}>
+            <ActivityIndicator color="#A78BFA" size="small" />
+            <Text style={styles.searchStatusText}>Searching...</Text>
+          </View>
+        ) : null}
+
+        {shouldShowSuggestions ? (
+          <View style={styles.dropdownCard}>
+            <Text style={styles.dropdownHelperText}>Tap an album to autofill details</Text>
+            {displayedSuggestions.map((result: AlbumSearchResult, index) => (
+              <Pressable
+                key={result.id}
+                style={[styles.resultCard, index === 0 ? styles.topResultCard : null]}
+                onPress={() => onSelectResult(result)}
+              >
+                <Image
+                  source={{
+                    uri: result.cover || "https://upload.wikimedia.org/wikipedia/commons/3/3c/No-album-art.png",
+                  }}
+                  style={styles.resultCover}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.resultTitle} numberOfLines={1}>
+                    {result.album}
+                  </Text>
+                  <Text style={styles.resultArtist} numberOfLines={1}>
+                    {result.artist}
+                  </Text>
+                  {result.year && result.year !== "Unknown" ? (
+                    <Text style={styles.resultYear}>{result.year}</Text>
+                  ) : null}
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
+        {shouldShowNoResults ? <Text style={styles.panelHintText}>No results found.</Text> : null}
+
+        {shouldShowSearchError ? <Text style={styles.searchErrorText}>Search unavailable.</Text> : null}
+
         <TextInput
           style={styles.input}
           placeholder="Artist"
@@ -93,50 +156,37 @@ export function RecordListScreen({
             onChangeText={setPurchasedAt}
           />
         )}
-        {isSearching && (
-          <View style={styles.searchStatusRow}>
-            <ActivityIndicator color="#A78BFA" />
-            <Text style={styles.searchStatusText}>Searching MusicBrainz…</Text>
-          </View>
-        )}
-        {searchMessage ? <Text style={styles.searchMessage}>{searchMessage}</Text> : null}
+
         {selectedMetadata ? (
           <View style={styles.selectedCard}>
-            <Text style={styles.selectedLabel}>Selected match</Text>
-            <Text style={styles.selectedTitle}>{selectedMetadata.album}</Text>
-            <Text style={styles.selectedArtist}>{selectedMetadata.artist}</Text>
-            <View style={styles.metaRow}>
-              <Text style={styles.genrePill}>{selectedMetadata.genre}</Text>
-              <Text style={styles.yearText}>{selectedMetadata.year}</Text>
+            <View style={styles.selectedContentRow}>
+              <Image
+                source={{
+                  uri:
+                    selectedMetadata.cover ||
+                    "https://upload.wikimedia.org/wikipedia/commons/3/3c/No-album-art.png",
+                }}
+                style={styles.selectedCover}
+              />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.selectedTitle}>{selectedMetadata.album}</Text>
+                <Text style={styles.selectedArtist}>{selectedMetadata.artist}</Text>
+                <View style={styles.metaRow}>
+                  {selectedMetadata.year && selectedMetadata.year !== "Unknown" ? (
+                    <Text style={styles.yearText}>{selectedMetadata.year}</Text>
+                  ) : null}
+                  {selectedMetadata.genre ? (
+                    <Text style={styles.genrePill}>{selectedMetadata.genre}</Text>
+                  ) : null}
+                </View>
+                <Text style={styles.selectedHelperText}>Details will be saved with this record.</Text>
+              </View>
             </View>
           </View>
         ) : null}
-        {searchResults.length > 0 ? (
-          <View style={styles.resultsList}>
-            {searchResults.map((result: AlbumSearchResult) => (
-              <Pressable
-                key={result.id}
-                style={styles.resultCard}
-                onPress={() => onSelectResult(result)}
-              >
-                <Image
-                  source={{
-                    uri: result.cover || "https://upload.wikimedia.org/wikipedia/commons/3/3c/No-album-art.png",
-                  }}
-                  style={styles.resultCover}
-                />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.resultTitle}>{result.album}</Text>
-                  <Text style={styles.resultArtist}>{result.artist}</Text>
-                  <View style={styles.metaRow}>
-                    <Text style={styles.genrePill}>{result.genre}</Text>
-                    <Text style={styles.yearText}>{result.year}</Text>
-                  </View>
-                </View>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
+
+        {addFormMessage ? <Text style={styles.addFormMessage}>{addFormMessage}</Text> : null}
+
         <Pressable style={styles.addButton} onPress={onAdd}>
           <Text style={styles.addButtonText}>Add</Text>
         </Pressable>
@@ -240,10 +290,29 @@ const styles = StyleSheet.create({
     color: "#A7A1BD",
     fontSize: 13,
   },
-  searchMessage: {
-    color: "#D4AF37",
-    fontSize: 13,
+  dropdownCard: {
+    backgroundColor: "#1A1830",
+    borderWidth: 1,
+    borderColor: "#3E3B5C",
+    borderRadius: 10,
+    padding: 10,
     marginBottom: 12,
+  },
+  dropdownHelperText: {
+    color: "#B6AFD8",
+    fontSize: 12,
+    marginBottom: 8,
+  },
+  searchErrorText: {
+    color: "#D4AF37",
+    fontSize: 12,
+    marginBottom: 12,
+  },
+  panelHintText: {
+    color: "#A7A1BD",
+    fontSize: 12,
+    lineHeight: 18,
+    marginBottom: 8,
   },
   selectedCard: {
     backgroundColor: "#1A1830",
@@ -253,20 +322,27 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 12,
   },
-  selectedLabel: {
-    color: "#A7A1BD",
-    fontSize: 12,
-    marginBottom: 4,
+  selectedContentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  selectedCover: {
+    width: 58,
+    height: 58,
+    borderRadius: 6,
+    backgroundColor: "#2A2844",
+    flexShrink: 0,
   },
   selectedTitle: {
     color: "#FFF4D6",
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "600",
   },
   selectedArtist: {
     color: "#A7A1BD",
-    fontSize: 13,
-    marginTop: 4,
+    fontSize: 12,
+    marginTop: 2,
   },
   metaRow: {
     flexDirection: "row",
@@ -283,33 +359,45 @@ const styles = StyleSheet.create({
     color: "#A7A1BD",
     fontSize: 11,
   },
-  resultsList: {
-    marginBottom: 12,
-  },
   resultCard: {
     flexDirection: "row",
     backgroundColor: "#1A1830",
     borderWidth: 1,
     borderColor: "#3E3B5C",
     borderRadius: 8,
-    padding: 10,
+    padding: 8,
     gap: 10,
-    marginBottom: 12,
+    marginBottom: 8,
+  },
+  topResultCard: {
+    borderColor: "rgba(124, 58, 237, 0.62)",
+    backgroundColor: "rgba(42, 34, 72, 0.95)",
+  },
+  selectedHelperText: {
+    color: "#C3BADF",
+    fontSize: 11,
+    marginTop: 6,
+    lineHeight: 16,
   },
   resultCover: {
-    width: 50,
-    height: 50,
+    width: 42,
+    height: 42,
     borderRadius: 6,
   },
   resultTitle: {
     color: "#FFF4D6",
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "600",
   },
   resultArtist: {
     color: "#A7A1BD",
-    fontSize: 12,
-    marginTop: 2,
+    fontSize: 11,
+    marginTop: 1,
+  },
+  resultYear: {
+    color: "#8F8AA6",
+    fontSize: 11,
+    marginTop: 3,
   },
   addButton: {
     backgroundColor: "#7C3AED",
@@ -321,6 +409,12 @@ const styles = StyleSheet.create({
     color: "#FFF4D6",
     fontSize: 16,
     fontWeight: "700",
+  },
+  addFormMessage: {
+    color: "#E7B4B4",
+    fontSize: 12,
+    marginBottom: 10,
+    lineHeight: 18,
   },
   recordCard: {
     flexDirection: "row",
