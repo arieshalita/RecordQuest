@@ -7,7 +7,7 @@ type StoreFinderScreenProps = {
   stores: StoreItem[];
   storeCheckIns: Record<string, number>;
   onViewStore: (store: StoreItem) => void;
-  openDirections: (address: string) => void;
+  openDirections: (store: StoreItem) => void;
   checkIn: (store: StoreItem) => void;
   back: () => void;
 };
@@ -46,7 +46,7 @@ export function StoreFinderScreen({
               <Text style={styles.storeMetaText}>{`Visits ${storeCheckIns[store.id] ?? 0}`}</Text>
             </View>
             <View style={styles.storeButtonsRow}>
-              <Pressable style={styles.storeButton} onPress={() => openDirections(store.address)}>
+              <Pressable style={styles.storeButton} onPress={() => openDirections(store)}>
                 <Text style={styles.storeButtonText}>Directions</Text>
               </Pressable>
               <Pressable style={[styles.storeButton, styles.viewStoreButton]} onPress={() => onViewStore(store)}>

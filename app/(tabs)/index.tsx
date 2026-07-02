@@ -695,12 +695,28 @@ export default function App() {
     setPurchaseCondition("Good");
   }
 
-  function openDirections(address: string) {
-    const query = encodeURIComponent(address);
+  function openDirections(store: StoreItem) {
+    const hasVerifiedCoordinates =
+      store.locationConfidence === "verified" &&
+      typeof store.latitude === "number" &&
+      typeof store.longitude === "number";
+
+    const destinationQuery = `${store.name} ${store.address}`.trim();
+    const encodedLabel = encodeURIComponent(store.name);
+    const encodedAddress = encodeURIComponent(store.address);
+    const encodedDestinationQuery = encodeURIComponent(destinationQuery);
+    const coordinatePair = hasVerifiedCoordinates ? `${store.latitude},${store.longitude}` : "";
+
     const url = Platform.select({
-      ios: `maps:0,0?q=${query}`,
-      android: `geo:0,0?q=${query}`,
-      default: `https://www.google.com/maps/search/?api=1&query=${query}`,
+      ios: hasVerifiedCoordinates
+        ? `http://maps.apple.com/?daddr=${coordinatePair}&q=${encodedLabel}`
+        : `http://maps.apple.com/?q=${encodedDestinationQuery}`,
+      android: hasVerifiedCoordinates
+        ? `geo:${store.latitude},${store.longitude}?q=${store.latitude},${store.longitude}(${encodedLabel})`
+        : `geo:0,0?q=${encodedDestinationQuery}`,
+      default: hasVerifiedCoordinates
+        ? `https://www.google.com/maps/search/?api=1&query=${store.latitude},${store.longitude}`
+        : `https://www.google.com/maps/search/?api=1&query=${encodedDestinationQuery}`,
     });
 
     if (url) {
@@ -1132,7 +1148,7 @@ export default function App() {
                   <Text style={styles.storeMetaText}>{`Visits ${storeCheckIns[store.id] ?? 0}`}</Text>
                 </View>
                 <View style={styles.storeButtonsRow}>
-                  <Pressable style={styles.storeButton} onPress={() => openDirections(store.address)}>
+                  <Pressable style={styles.storeButton} onPress={() => openDirections(store)}>
                     <Text style={styles.storeButtonText}>Directions</Text>
                   </Pressable>
                   <Pressable style={[styles.storeButton, styles.viewStoreButton]} onPress={() => {

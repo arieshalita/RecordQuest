@@ -25,6 +25,12 @@ export type StoreItem = {
   rating: string;
   distance: string;
   description: string;
+  storeCategory?: "record-store" | "media-store" | "bookstore";
+  verificationNote?: string;
+  latitude?: number;
+  longitude?: number;
+  source?: "curated" | "osm" | "google";
+  locationConfidence?: "verified" | "unverified";
 };
 
 export type AchievementBadge = {

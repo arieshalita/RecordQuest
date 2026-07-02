@@ -6,7 +6,7 @@ import type { StoreItem } from "../hooks/types";
 type StoreDetailScreenProps = {
   detailStore: StoreItem;
   storeCheckIns: Record<string, number>;
-  openDirections: (address: string) => void;
+  openDirections: (store: StoreItem) => void;
   checkIn: (store: StoreItem) => void;
   onBack: () => void;
 };
@@ -32,7 +32,7 @@ export function StoreDetailScreen({
         <Text style={styles.storeMetaText}>{detailStore.hours}</Text>
         <Text style={styles.storeDescription}>{detailStore.description}</Text>
         <View style={styles.storeButtonsRow}>
-          <Pressable style={styles.storeButton} onPress={() => openDirections(detailStore.address)}>
+          <Pressable style={styles.storeButton} onPress={() => openDirections(detailStore)}>
             <Text style={styles.storeButtonText}>Directions</Text>
           </Pressable>
           <Pressable style={[styles.storeButton, styles.checkInButton]} onPress={() => checkIn(detailStore)}>
