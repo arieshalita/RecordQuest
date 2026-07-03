@@ -21,6 +21,16 @@ type StoreCheckInRow = {
   count: number;
 };
 
+type UserPushTokenRow = {
+  id: number;
+  user_id: string;
+  expo_push_token: string;
+  device_platform: string;
+  created_at: string;
+  updated_at: string;
+  last_seen_at: string;
+};
+
 const RECORD_COLUMNS =
   "id, album, artist, year, genre, cover, purchasedAt, purchaseDate, condition, price, notes, favoriteTrack, rating";
 
@@ -282,4 +292,87 @@ export async function saveStoreCheckins(
     logSupabaseError("saveStoreCheckins insert", insertError);
     throw toServiceError("Failed to save store check-ins", insertError);
   }
+}
+
+export async function upsertUserPushToken(
+  userId: string,
+  expoPushToken: string,
+  devicePlatform: string
+): Promise<boolean> {
+  const scopedUserId = ensureUserId(userId);
+  const scopedToken = expoPushToken.trim();
+
+  if (!scopedToken) {
+    return false;
+  }
+
+  const now = new Date().toISOString();
+
+  const { data: existing, error: selectError } = await supabase
+    .from("user_push_tokens")
+    .select("id")
+    .eq("user_id", scopedUserId)
+    .eq("expo_push_token", scopedToken)
+    .limit(1)
+    .maybeSingle();
+
+  if (selectError) {
+    logSupabaseError("upsertUserPushToken select", selectError);
+    throw toServiceError("Failed to query push token", selectError);
+  }
+
+  if (existing?.id) {
+    const { error: updateError } = await supabase
+      .from("user_push_tokens")
+      .update({
+        device_platform: devicePlatform,
+        last_seen_at: now,
+        updated_at: now,
+      })
+      .eq("id", existing.id);
+
+    if (updateError) {
+      logSupabaseError("upsertUserPushToken update", updateError);
+      throw toServiceError("Failed to update push token", updateError);
+    }
+
+    return true;
+  }
+
+  const { error: insertError } = await supabase
+    .from("user_push_tokens")
+    .insert({
+      user_id: scopedUserId,
+      expo_push_token: scopedToken,
+      device_platform: devicePlatform,
+      last_seen_at: now,
+      updated_at: now,
+    });
+
+  if (insertError) {
+    logSupabaseError("upsertUserPushToken insert", insertError);
+    throw toServiceError("Failed to insert push token", insertError);
+  }
+
+  return true;
+}
+
+export async function getLatestUserPushToken(userId: string): Promise<string | null> {
+  const scopedUserId = ensureUserId(userId);
+
+  const { data, error } = await supabase
+    .from("user_push_tokens")
+    .select("expo_push_token, updated_at")
+    .eq("user_id", scopedUserId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    logSupabaseError("getLatestUserPushToken", error);
+    throw toServiceError("Failed to load latest user push token", error);
+  }
+
+  const token = data?.expo_push_token?.trim();
+  return token ? token : null;
 }
