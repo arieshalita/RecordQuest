@@ -6,6 +6,17 @@ type RecordRow = RecordItem & {
   user_id: string;
 };
 
+type RecordIdRow = {
+  id: number | string;
+};
+
+type CollectionNotificationInvokeErrorDetails = {
+  message: string;
+  status?: number;
+  contextStatus?: number;
+  contextData?: unknown;
+};
+
 type WishlistRow = RecordItem & {
   user_id: string;
 };
@@ -33,6 +44,9 @@ type UserPushTokenRow = {
 
 const RECORD_COLUMNS =
   "id, album, artist, year, genre, cover, purchasedAt, purchaseDate, condition, price, notes, favoriteTrack, rating";
+
+const collectionNotificationInFlight = new Set<number>();
+const collectionNotificationCompleted = new Set<number>();
 
 function logSupabaseError(context: string, error: PostgrestError): void {
   console.warn(`[RecordQuest][supabase] ${context} code:`, error.code);
@@ -63,6 +77,171 @@ function ensureUserId(userId: string): string {
     throw new Error("A valid userId is required for Supabase queries.");
   }
   return trimmed;
+}
+
+function isValidCollectionItemId(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function toCollectionItemId(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+async function readInvokeErrorContext(context: unknown): Promise<{ status?: number; data?: unknown }> {
+  if (!context || typeof context !== "object") {
+    return {};
+  }
+
+  const contextRecord = context as {
+    status?: unknown;
+    clone?: () => unknown;
+    json?: () => Promise<unknown>;
+    text?: () => Promise<string>;
+  };
+
+  const out: { status?: number; data?: unknown } = {};
+
+  if (typeof contextRecord.status === "number") {
+    out.status = contextRecord.status;
+  }
+
+  try {
+    const readable = typeof contextRecord.clone === "function" ? contextRecord.clone() : contextRecord;
+    const readableRecord = readable as {
+      json?: () => Promise<unknown>;
+      text?: () => Promise<string>;
+    };
+
+    if (typeof readableRecord.json === "function") {
+      out.data = await readableRecord.json();
+      return out;
+    }
+
+    if (typeof readableRecord.text === "function") {
+      const rawText = await readableRecord.text();
+      out.data = rawText.length > 300 ? `${rawText.slice(0, 300)}...` : rawText;
+      return out;
+    }
+  } catch {
+    out.data = "unreadable_error_context";
+  }
+
+  return out;
+}
+
+async function extractInvokeErrorDetails(error: unknown): Promise<CollectionNotificationInvokeErrorDetails> {
+  const errorRecord = (error ?? {}) as {
+    message?: unknown;
+    status?: unknown;
+    context?: unknown;
+  };
+
+  const details: CollectionNotificationInvokeErrorDetails = {
+    message:
+      typeof errorRecord.message === "string"
+        ? errorRecord.message
+        : "unknown_collection_invoke_error",
+  };
+
+  if (typeof errorRecord.status === "number") {
+    details.status = errorRecord.status;
+  }
+
+  const contextInfo = await readInvokeErrorContext(errorRecord.context);
+
+  if (typeof contextInfo.status === "number") {
+    details.contextStatus = contextInfo.status;
+  }
+
+  if (contextInfo.data !== undefined) {
+    details.contextData = contextInfo.data;
+  }
+
+  return details;
+}
+
+function scheduleCollectionNotification(collectionItemId: number): void {
+  console.log("[RecordQuest][push] collection notification invoke attempted:", true);
+  console.log("[RecordQuest][push] collection item id sent to function:", collectionItemId);
+
+  if (!isValidCollectionItemId(collectionItemId)) {
+    console.warn("[RecordQuest][push] collection notification invoke attempted:", false);
+    return;
+  }
+
+  if (
+    collectionNotificationInFlight.has(collectionItemId) ||
+    collectionNotificationCompleted.has(collectionItemId)
+  ) {
+    console.warn("[RecordQuest][push] collection notification invoke attempted:", false);
+    return;
+  }
+
+  collectionNotificationInFlight.add(collectionItemId);
+
+  void supabase.functions
+    .invoke("send-collection-notification", {
+      body: {
+        collectionItemId,
+      },
+    })
+    .then(async ({ data, error }) => {
+      if (error) {
+        const errorDetails = await extractInvokeErrorDetails(error);
+        console.warn("[RecordQuest][push] collection notification invoke failed:", errorDetails.message);
+        if (typeof errorDetails.status === "number") {
+          console.warn("[RecordQuest][push] collection notification invoke status:", errorDetails.status);
+        }
+        if (typeof errorDetails.contextStatus === "number") {
+          console.warn(
+            "[RecordQuest][push] collection notification invoke context status:",
+            errorDetails.contextStatus
+          );
+        }
+        if (errorDetails.contextData !== undefined) {
+          console.warn(
+            "[RecordQuest][push] collection notification invoke response body:",
+            errorDetails.contextData
+          );
+        }
+        return;
+      }
+
+      const sent = Boolean((data as { sent?: boolean } | null)?.sent);
+      const reason = (data as { reason?: string } | null)?.reason ?? "none";
+
+      console.log("[RecordQuest][push] collection notification sent:", sent);
+
+      if (!sent) {
+        console.warn("[RecordQuest][push] collection notification not sent:", reason);
+      }
+    })
+    .catch((invokeError) => {
+      console.warn(
+        "[RecordQuest][push] collection notification invoke error:",
+        invokeError instanceof Error ? invokeError.message : "unknown error"
+      );
+    })
+    .finally(() => {
+      collectionNotificationInFlight.delete(collectionItemId);
+      collectionNotificationCompleted.add(collectionItemId);
+    });
 }
 
 export async function ensureUserProfile(userId: string): Promise<void> {
@@ -106,6 +285,26 @@ export async function saveRecords(
 ): Promise<void> {
   const scopedUserId = ensureUserId(userId);
 
+  const { data: existingRows, error: existingRowsError } = await supabase
+    .from("records")
+    .select("id")
+    .eq("user_id", scopedUserId);
+
+  if (existingRowsError) {
+    logSupabaseError("saveRecords preselect", existingRowsError);
+    throw toServiceError("Failed to load existing records", existingRowsError);
+  }
+
+  const existingIds = new Set(
+    ((existingRows as RecordIdRow[] | null) ?? [])
+      .map((row) => toCollectionItemId(row.id))
+      .filter((id): id is number => typeof id === "number")
+  );
+
+  const newlyInsertedCollectionItemIds = records
+    .map((record) => toCollectionItemId(record.id))
+    .filter((id): id is number => typeof id === "number" && !existingIds.has(id));
+
   const { error: deleteError } = await supabase
     .from("records")
     .delete()
@@ -125,11 +324,33 @@ export async function saveRecords(
     ...record,
   }));
 
-  const { error: insertError } = await supabase.from("records").insert(rows);
+  const { data: insertedRows, error: insertError } = await supabase
+    .from("records")
+    .insert(rows)
+    .select("id");
 
   if (insertError) {
+    console.warn("[RecordQuest][push] collection insert succeeded:", false);
     logSupabaseError("saveRecords insert", insertError);
     throw toServiceError("Failed to save records", insertError);
+  }
+
+  console.log("[RecordQuest][push] collection insert succeeded:", true);
+
+  const insertedIds = new Set(
+    ((insertedRows as RecordIdRow[] | null) ?? [])
+      .map((row) => toCollectionItemId(row.id))
+      .filter((id): id is number => typeof id === "number")
+  );
+
+  const insertedNewCollectionItemIds = newlyInsertedCollectionItemIds.filter((id) => insertedIds.has(id));
+  console.log(
+    "[RecordQuest][push] inserted/new collection item id present:",
+    insertedNewCollectionItemIds.length > 0
+  );
+
+  for (const collectionItemId of insertedNewCollectionItemIds) {
+    scheduleCollectionNotification(collectionItemId);
   }
 }
 
