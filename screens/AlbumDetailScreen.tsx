@@ -26,6 +26,39 @@ export function AlbumDetailScreen({
 }: AlbumDetailScreenProps) {
   const selectedRating = (recordDraft.rating ?? selectedRecord.rating ?? 0) as number;
 
+  function hasValidPurchaseDate(value?: string): boolean {
+    if (!value) {
+      return false;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return false;
+    }
+
+    return !Number.isNaN(Date.parse(trimmed));
+  }
+
+  function formatAddedDate(value?: string): string {
+    if (!value) {
+      return "Added date unavailable";
+    }
+
+    const timestamp = Date.parse(value);
+    if (Number.isNaN(timestamp)) {
+      return "Added date unavailable";
+    }
+
+    return `Added ${new Date(timestamp).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    })}`;
+  }
+
+  const addedDateLabel = formatAddedDate(selectedRecord.added_at);
+  const showPurchaseDateField = isEditingRecord || hasValidPurchaseDate(selectedRecord.purchaseDate);
+
   return (
     <ScrollView contentContainerStyle={styles.page}>
       <TopBar title="Collector Journal" back={closeRecordDetail} />
@@ -40,6 +73,7 @@ export function AlbumDetailScreen({
 
         <View style={styles.journalCard}>
           <Text style={styles.journalHeader}>Collector Details</Text>
+          <Text style={styles.addedDateText}>{addedDateLabel}</Text>
 
           <View style={styles.journalField}>
             <Text style={styles.journalLabel}>Purchased At</Text>
@@ -57,20 +91,22 @@ export function AlbumDetailScreen({
           </View>
 
           <View style={styles.columnRow}>
-            <View style={styles.journalHalfField}>
-              <Text style={styles.journalLabel}>Purchase Date</Text>
-              {isEditingRecord ? (
-                <TextInput
-                  style={styles.journalInput}
-                  value={recordDraft.purchaseDate ?? ""}
-                  onChangeText={(value) => updateRecordDraft("purchaseDate", value)}
-                  placeholder="MM/DD/YYYY"
-                  placeholderTextColor="#8b7fe0"
-                />
-              ) : (
-                <Text style={styles.journalValue}>{selectedRecord.purchaseDate || "Unknown"}</Text>
-              )}
-            </View>
+            {showPurchaseDateField ? (
+              <View style={styles.journalHalfField}>
+                <Text style={styles.journalLabel}>Purchase Date</Text>
+                {isEditingRecord ? (
+                  <TextInput
+                    style={styles.journalInput}
+                    value={recordDraft.purchaseDate ?? ""}
+                    onChangeText={(value) => updateRecordDraft("purchaseDate", value)}
+                    placeholder="MM/DD/YYYY"
+                    placeholderTextColor="#8b7fe0"
+                  />
+                ) : (
+                  <Text style={styles.journalValue}>{selectedRecord.purchaseDate}</Text>
+                )}
+              </View>
+            ) : null}
             <View style={styles.journalHalfField}>
               <Text style={styles.journalLabel}>Price Paid</Text>
               {isEditingRecord ? (
@@ -229,6 +265,11 @@ const styles = StyleSheet.create({
     color: "#D4AF37",
     fontSize: 14,
     fontWeight: "600",
+    marginBottom: 12,
+  },
+  addedDateText: {
+    color: "#A7A1BD",
+    fontSize: 12,
     marginBottom: 12,
   },
   journalField: {

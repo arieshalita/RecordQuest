@@ -8,6 +8,7 @@ type RecordRow = RecordItem & {
 
 type RecordIdRow = {
   id: number | string;
+  added_at?: string | null;
 };
 
 type CollectionNotificationInvokeErrorDetails = {
@@ -42,8 +43,15 @@ type UserPushTokenRow = {
   last_seen_at: string;
 };
 
+type UserAchievementRow = {
+  user_id: string;
+  achievement_id: string;
+  earned_at: string | null;
+};
+
 const RECORD_COLUMNS =
   "id, album, artist, year, genre, cover, purchasedAt, purchaseDate, condition, price, notes, favoriteTrack, rating";
+const RECORD_COLUMNS_WITH_ADDED_AT = `${RECORD_COLUMNS}, added_at`;
 
 const collectionNotificationInFlight = new Set<number>();
 const collectionNotificationCompleted = new Set<number>();
@@ -77,6 +85,22 @@ function ensureUserId(userId: string): string {
     throw new Error("A valid userId is required for Supabase queries.");
   }
   return trimmed;
+}
+
+function isMissingAddedAtColumnError(error: PostgrestError): boolean {
+  if (error.code === "42703") {
+    return true;
+  }
+
+  return error.message.toLowerCase().includes("added_at");
+}
+
+function isMissingUserAchievementsTableError(error: PostgrestError): boolean {
+  if (error.code === "42P01") {
+    return true;
+  }
+
+  return error.message.toLowerCase().includes("user_achievements");
 }
 
 function isValidCollectionItemId(value: unknown): value is number {
@@ -265,15 +289,35 @@ export async function ensureUserProfile(userId: string): Promise<void> {
 export async function loadRecords(userId: string): Promise<RecordItem[]> {
   const scopedUserId = ensureUserId(userId);
 
-  const { data, error } = await supabase
+  let data: unknown = null;
+
+  const { data: dataWithAddedAt, error: errorWithAddedAt } = await supabase
     .from("records")
-    .select(RECORD_COLUMNS)
+    .select(RECORD_COLUMNS_WITH_ADDED_AT)
     .eq("user_id", scopedUserId)
+    .order("added_at", { ascending: false })
     .order("id", { ascending: false });
 
-  if (error) {
-    logSupabaseError("loadRecords", error);
-    throw toServiceError("Failed to load records", error);
+  if (errorWithAddedAt) {
+    if (!isMissingAddedAtColumnError(errorWithAddedAt)) {
+      logSupabaseError("loadRecords", errorWithAddedAt);
+      throw toServiceError("Failed to load records", errorWithAddedAt);
+    }
+
+    const { data: legacyData, error: legacyError } = await supabase
+      .from("records")
+      .select(RECORD_COLUMNS)
+      .eq("user_id", scopedUserId)
+      .order("id", { ascending: false });
+
+    if (legacyError) {
+      logSupabaseError("loadRecords legacy", legacyError);
+      throw toServiceError("Failed to load records", legacyError);
+    }
+
+    data = legacyData;
+  } else {
+    data = dataWithAddedAt;
   }
 
   return stripUserId((data as RecordRow[] | null) ?? []) as RecordItem[];
@@ -285,18 +329,49 @@ export async function saveRecords(
 ): Promise<void> {
   const scopedUserId = ensureUserId(userId);
 
-  const { data: existingRows, error: existingRowsError } = await supabase
+  let supportsAddedAt = true;
+
+  let existingRows: RecordIdRow[] = [];
+
+  const { data: existingRowsWithAddedAt, error: existingRowsWithAddedAtError } = await supabase
     .from("records")
-    .select("id")
+    .select("id,added_at")
     .eq("user_id", scopedUserId);
 
-  if (existingRowsError) {
-    logSupabaseError("saveRecords preselect", existingRowsError);
-    throw toServiceError("Failed to load existing records", existingRowsError);
+  if (existingRowsWithAddedAtError) {
+    if (!isMissingAddedAtColumnError(existingRowsWithAddedAtError)) {
+      logSupabaseError("saveRecords preselect", existingRowsWithAddedAtError);
+      throw toServiceError("Failed to load existing records", existingRowsWithAddedAtError);
+    }
+
+    supportsAddedAt = false;
+
+    const { data: legacyExistingRows, error: legacyExistingRowsError } = await supabase
+      .from("records")
+      .select("id")
+      .eq("user_id", scopedUserId);
+
+    if (legacyExistingRowsError) {
+      logSupabaseError("saveRecords preselect legacy", legacyExistingRowsError);
+      throw toServiceError("Failed to load existing records", legacyExistingRowsError);
+    }
+
+    existingRows = ((legacyExistingRows as RecordIdRow[] | null) ?? []).map((row) => ({ id: row.id }));
+  } else {
+    existingRows = (existingRowsWithAddedAt as RecordIdRow[] | null) ?? [];
+  }
+
+  const existingAddedAtById = new Map<number, string>();
+  for (const row of existingRows) {
+    const parsedId = toCollectionItemId(row.id);
+    const addedAt = typeof row.added_at === "string" ? row.added_at.trim() : "";
+    if (parsedId && addedAt) {
+      existingAddedAtById.set(parsedId, addedAt);
+    }
   }
 
   const existingIds = new Set(
-    ((existingRows as RecordIdRow[] | null) ?? [])
+    existingRows
       .map((row) => toCollectionItemId(row.id))
       .filter((id): id is number => typeof id === "number")
   );
@@ -319,10 +394,26 @@ export async function saveRecords(
     return;
   }
 
-  const rows: RecordRow[] = records.map((record) => ({
-    user_id: scopedUserId,
-    ...record,
-  }));
+  const rows: RecordRow[] = records.map((record) => {
+    const parsedId = toCollectionItemId(record.id);
+    const existingAddedAt = parsedId ? existingAddedAtById.get(parsedId) : undefined;
+    const currentAddedAt = typeof record.added_at === "string" ? record.added_at.trim() : "";
+    const resolvedAddedAt = currentAddedAt || existingAddedAt || new Date().toISOString();
+
+    if (supportsAddedAt) {
+      return {
+        user_id: scopedUserId,
+        ...record,
+        added_at: resolvedAddedAt,
+      };
+    }
+
+    const { added_at: _ignoredAddedAt, ...recordWithoutAddedAt } = record;
+    return {
+      user_id: scopedUserId,
+      ...recordWithoutAddedAt,
+    } as RecordRow;
+  });
 
   const { data: insertedRows, error: insertError } = await supabase
     .from("records")
@@ -357,15 +448,35 @@ export async function saveRecords(
 export async function loadWishlist(userId: string): Promise<RecordItem[]> {
   const scopedUserId = ensureUserId(userId);
 
-  const { data, error } = await supabase
+  let data: unknown = null;
+
+  const { data: dataWithAddedAt, error: errorWithAddedAt } = await supabase
     .from("wishlist")
-    .select(RECORD_COLUMNS)
+    .select(RECORD_COLUMNS_WITH_ADDED_AT)
     .eq("user_id", scopedUserId)
+    .order("added_at", { ascending: false })
     .order("id", { ascending: false });
 
-  if (error) {
-    logSupabaseError("loadWishlist", error);
-    throw toServiceError("Failed to load wishlist", error);
+  if (errorWithAddedAt) {
+    if (!isMissingAddedAtColumnError(errorWithAddedAt)) {
+      logSupabaseError("loadWishlist", errorWithAddedAt);
+      throw toServiceError("Failed to load wishlist", errorWithAddedAt);
+    }
+
+    const { data: legacyData, error: legacyError } = await supabase
+      .from("wishlist")
+      .select(RECORD_COLUMNS)
+      .eq("user_id", scopedUserId)
+      .order("id", { ascending: false });
+
+    if (legacyError) {
+      logSupabaseError("loadWishlist legacy", legacyError);
+      throw toServiceError("Failed to load wishlist", legacyError);
+    }
+
+    data = legacyData;
+  } else {
+    data = dataWithAddedAt;
   }
 
   return stripUserId((data as WishlistRow[] | null) ?? []) as RecordItem[];
@@ -376,6 +487,46 @@ export async function saveWishlist(
   wishlist: RecordItem[]
 ): Promise<void> {
   const scopedUserId = ensureUserId(userId);
+
+  let supportsAddedAt = true;
+  let existingRows: RecordIdRow[] = [];
+
+  const { data: existingRowsWithAddedAt, error: existingRowsWithAddedAtError } = await supabase
+    .from("wishlist")
+    .select("id,added_at")
+    .eq("user_id", scopedUserId);
+
+  if (existingRowsWithAddedAtError) {
+    if (!isMissingAddedAtColumnError(existingRowsWithAddedAtError)) {
+      logSupabaseError("saveWishlist preselect", existingRowsWithAddedAtError);
+      throw toServiceError("Failed to load existing wishlist", existingRowsWithAddedAtError);
+    }
+
+    supportsAddedAt = false;
+
+    const { data: legacyExistingRows, error: legacyExistingRowsError } = await supabase
+      .from("wishlist")
+      .select("id")
+      .eq("user_id", scopedUserId);
+
+    if (legacyExistingRowsError) {
+      logSupabaseError("saveWishlist preselect legacy", legacyExistingRowsError);
+      throw toServiceError("Failed to load existing wishlist", legacyExistingRowsError);
+    }
+
+    existingRows = ((legacyExistingRows as RecordIdRow[] | null) ?? []).map((row) => ({ id: row.id }));
+  } else {
+    existingRows = (existingRowsWithAddedAt as RecordIdRow[] | null) ?? [];
+  }
+
+  const existingAddedAtById = new Map<number, string>();
+  for (const row of existingRows) {
+    const parsedId = toCollectionItemId(row.id);
+    const addedAt = typeof row.added_at === "string" ? row.added_at.trim() : "";
+    if (parsedId && addedAt) {
+      existingAddedAtById.set(parsedId, addedAt);
+    }
+  }
 
   const { error: deleteError } = await supabase
     .from("wishlist")
@@ -391,10 +542,26 @@ export async function saveWishlist(
     return;
   }
 
-  const rows: WishlistRow[] = wishlist.map((item) => ({
-    user_id: scopedUserId,
-    ...item,
-  }));
+  const rows: WishlistRow[] = wishlist.map((item) => {
+    const parsedId = toCollectionItemId(item.id);
+    const existingAddedAt = parsedId ? existingAddedAtById.get(parsedId) : undefined;
+    const currentAddedAt = typeof item.added_at === "string" ? item.added_at.trim() : "";
+    const resolvedAddedAt = currentAddedAt || existingAddedAt || new Date().toISOString();
+
+    if (supportsAddedAt) {
+      return {
+        user_id: scopedUserId,
+        ...item,
+        added_at: resolvedAddedAt,
+      };
+    }
+
+    const { added_at: _ignoredAddedAt, ...itemWithoutAddedAt } = item;
+    return {
+      user_id: scopedUserId,
+      ...itemWithoutAddedAt,
+    } as WishlistRow;
+  });
 
   const { error: insertError } = await supabase.from("wishlist").insert(rows);
 
@@ -596,4 +763,92 @@ export async function getLatestUserPushToken(userId: string): Promise<string | n
 
   const token = data?.expo_push_token?.trim();
   return token ? token : null;
+}
+
+export async function loadUserAchievementEarnedAt(
+  userId: string
+): Promise<Record<string, string | null>> {
+  const scopedUserId = ensureUserId(userId);
+
+  const { data, error } = await supabase
+    .from("user_achievements")
+    .select("achievement_id,earned_at")
+    .eq("user_id", scopedUserId);
+
+  if (error) {
+    if (isMissingUserAchievementsTableError(error)) {
+      return {};
+    }
+
+    logSupabaseError("loadUserAchievementEarnedAt", error);
+    throw toServiceError("Failed to load achievement earned dates", error);
+  }
+
+  const rows = (data as Array<Pick<UserAchievementRow, "achievement_id" | "earned_at">> | null) ?? [];
+
+  return rows.reduce<Record<string, string | null>>((acc, row) => {
+    const achievementId = row.achievement_id?.trim();
+    if (!achievementId) {
+      return acc;
+    }
+
+    acc[achievementId] = row.earned_at ?? null;
+    return acc;
+  }, {});
+}
+
+export async function persistAchievementEarnedAt(
+  userId: string,
+  achievementId: string
+): Promise<string | null> {
+  const scopedUserId = ensureUserId(userId);
+  const scopedAchievementId = achievementId.trim();
+
+  if (!scopedAchievementId) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+
+  const { error: upsertError } = await supabase
+    .from("user_achievements")
+    .upsert(
+      {
+        user_id: scopedUserId,
+        achievement_id: scopedAchievementId,
+        earned_at: now,
+      },
+      {
+        onConflict: "user_id,achievement_id",
+        ignoreDuplicates: true,
+      }
+    );
+
+  if (upsertError) {
+    if (isMissingUserAchievementsTableError(upsertError)) {
+      return null;
+    }
+
+    logSupabaseError("persistAchievementEarnedAt upsert", upsertError);
+    throw toServiceError("Failed to persist achievement earned date", upsertError);
+  }
+
+  const { data, error: selectError } = await supabase
+    .from("user_achievements")
+    .select("earned_at")
+    .eq("user_id", scopedUserId)
+    .eq("achievement_id", scopedAchievementId)
+    .limit(1)
+    .maybeSingle();
+
+  if (selectError) {
+    if (isMissingUserAchievementsTableError(selectError)) {
+      return null;
+    }
+
+    logSupabaseError("persistAchievementEarnedAt select", selectError);
+    throw toServiceError("Failed to read achievement earned date", selectError);
+  }
+
+  return data?.earned_at ?? now;
 }

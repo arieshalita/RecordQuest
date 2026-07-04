@@ -9,6 +9,7 @@ export type AchievementBadge = {
   current: number;
   target: number;
   unlocked: boolean;
+  earned_at?: string | null;
 };
 
 interface AchievementBadgeCardProps {
@@ -16,6 +17,27 @@ interface AchievementBadgeCardProps {
 }
 
 export function AchievementBadgeCard({ badge }: AchievementBadgeCardProps) {
+  function formatEarnedDate(value?: string | null): string | null {
+    if (!value) {
+      return null;
+    }
+
+    const timestamp = Date.parse(value);
+    if (Number.isNaN(timestamp)) {
+      return null;
+    }
+
+    const formatted = new Date(timestamp).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+
+    return `Earned ${formatted}`;
+  }
+
+  const earnedDateLabel = badge.unlocked ? formatEarnedDate(badge.earned_at) : null;
+
   return (
     <View style={[styles.badgeCard, badge.unlocked ? styles.badgeCardUnlocked : styles.badgeCardLocked]}>
       <Text style={[styles.badgeEmoji, badge.unlocked ? styles.badgeEmojiUnlocked : styles.badgeEmojiLocked]}>
@@ -41,6 +63,9 @@ export function AchievementBadgeCard({ badge }: AchievementBadgeCardProps) {
       <Text style={[styles.badgeStatus, badge.unlocked ? styles.badgeStatusUnlocked : styles.badgeStatusLocked]}>
         {badge.unlocked ? "Unlocked" : "Locked"}
       </Text>
+      {earnedDateLabel ? (
+        <Text style={styles.badgeEarnedDate}>{earnedDateLabel}</Text>
+      ) : null}
     </View>
   );
 }
@@ -130,5 +155,13 @@ const styles = StyleSheet.create({
   },
   badgeStatusLocked: {
     color: "#57516C",
+  },
+  badgeEarnedDate: {
+    color: "#CDBA90",
+    fontSize: 9,
+    fontWeight: "600",
+    lineHeight: 12,
+    marginTop: 2,
+    textAlign: "center",
   },
 });

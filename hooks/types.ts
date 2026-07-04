@@ -4,6 +4,7 @@ export type RecordItem = {
   id: number;
   album: string;
   artist: string;
+  added_at?: string;
   year: string;
   genre: string;
   cover: string;
@@ -41,6 +42,7 @@ export type AchievementBadge = {
   current: number;
   target: number;
   unlocked: boolean;
+  earned_at?: string | null;
 };
 
 export type AchievementCategory = {

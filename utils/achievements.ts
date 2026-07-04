@@ -4,7 +4,8 @@ export function calculateAchievementCategories(
   records: RecordItem[],
   wishlist: RecordItem[],
   storeCheckIns: Record<string, number>,
-  activity: string[]
+  activity: string[],
+  earnedAtById: Record<string, string | null> = {}
 ): AchievementCategory[] {
   const totalRecords = records.length;
   const totalWishlist = wishlist.length;
@@ -30,6 +31,7 @@ export function calculateAchievementCategories(
     current,
     target,
     unlocked: current >= target,
+    earned_at: earnedAtById[id] ?? null,
   });
 
   return [

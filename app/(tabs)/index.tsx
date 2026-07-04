@@ -45,6 +45,10 @@ import {
 } from "../../hooks/store-discovery";
 import { getDiscoverUsers, type DiscoverUser } from "../../hooks/discover-users";
 import { loadFollowingActivity, type FollowingActivityItem } from "../../hooks/following-activity";
+import {
+  loadUserAchievementEarnedAt,
+  persistAchievementEarnedAt,
+} from "../../hooks/recordquest-supabase-service";
 
 const starterRecords: RecordItem[] = [
   {
@@ -164,11 +168,13 @@ export default function App() {
   const [purchasedAtDetail, setPurchasedAtDetail] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [successMessageTimer, setSuccessMessageTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const [achievementEarnedAtById, setAchievementEarnedAtById] = useState<Record<string, string | null>>({});
   const didHydrateRef = useRef(false);
   const lastFollowingFeedLoadRef = useRef(0);
   const hasLoadedFollowingFeedRef = useRef(false);
   const suppressNextTypeaheadRef = useRef(false);
   const latestAlbumSearchRequestRef = useRef(0);
+  const achievementEarnedAtInFlightRef = useRef(new Set<string>());
 
   const shouldUseCloudBadgeData = isSupabaseDataModeEnabled() && !!user;
   const badgeRecords = shouldUseCloudBadgeData && recordStateSource !== "cloud" ? [] : records;
@@ -180,7 +186,8 @@ export default function App() {
     badgeRecords,
     badgeWishlist,
     badgeStoreCheckIns,
-    badgeActivity
+    badgeActivity,
+    achievementEarnedAtById
   );
   const unlockedBadgeCount = achievementCategories
     .flatMap((category) => category.badges)
@@ -247,6 +254,86 @@ export default function App() {
     // (Also triggers background cloud sync in saveRecordQuestState)
     saveRecordQuestState({ records, wishlist, activity, storeCheckIns });
   }, [records, wishlist, activity, storeCheckIns, loaded]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadAchievementEarnedAtData() {
+      if (!user?.id) {
+        if (isMounted) {
+          setAchievementEarnedAtById({});
+          achievementEarnedAtInFlightRef.current.clear();
+        }
+        return;
+      }
+
+      try {
+        const earnedAtMap = await loadUserAchievementEarnedAt(user.id);
+        if (!isMounted) return;
+        setAchievementEarnedAtById(earnedAtMap);
+        achievementEarnedAtInFlightRef.current.clear();
+      } catch (error) {
+        if (!isMounted) return;
+        console.warn(
+          "[RecordQuest][achievements] earned date load failed:",
+          error instanceof Error ? error.message : "unknown error"
+        );
+      }
+    }
+
+    void loadAchievementEarnedAtData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      return;
+    }
+
+    const unlockedWithoutEarnedAt = achievementCategories
+      .flatMap((category) => category.badges)
+      .filter((badge) => badge.unlocked && !badge.earned_at)
+      .map((badge) => badge.id.trim())
+      .filter((badgeId) => badgeId.length > 0);
+
+    for (const badgeId of unlockedWithoutEarnedAt) {
+      if (achievementEarnedAtInFlightRef.current.has(badgeId)) {
+        continue;
+      }
+
+      achievementEarnedAtInFlightRef.current.add(badgeId);
+
+      void persistAchievementEarnedAt(user.id, badgeId)
+        .then((earnedAt) => {
+          if (!earnedAt) {
+            return;
+          }
+
+          setAchievementEarnedAtById((current) => {
+            if (current[badgeId]) {
+              return current;
+            }
+
+            return {
+              ...current,
+              [badgeId]: earnedAt,
+            };
+          });
+        })
+        .catch((error) => {
+          console.warn(
+            "[RecordQuest][achievements] earned date save failed:",
+            error instanceof Error ? error.message : "unknown error"
+          );
+        })
+        .finally(() => {
+          achievementEarnedAtInFlightRef.current.delete(badgeId);
+        });
+    }
+  }, [achievementCategories, user?.id]);
 
   useEffect(() => {
     if (screen !== "Stores" || detailStore) return;
@@ -509,6 +596,7 @@ export default function App() {
       id: Date.now(),
       album: trimmedAlbum,
       artist: trimmedArtist,
+      added_at: new Date().toISOString(),
       year: "Unknown",
       genre: "Vinyl",
       cover: placeholderCover,
@@ -676,6 +764,7 @@ export default function App() {
 
     const updatedRecord = {
       ...recordBeingPromoted,
+      added_at: new Date().toISOString(),
       purchasedAt: purchasedAtDetail || recordBeingPromoted.purchasedAt || undefined,
       price: purchasePrice || recordBeingPromoted.price || "",
       purchaseDate: purchaseDate || recordBeingPromoted.purchaseDate || "",
