@@ -12,12 +12,18 @@ export type PushRegistrationResult = {
 export type PushSendResult = {
   success: boolean;
   message?: string;
+  reason?:
+    | "missing_token"
+    | "invalid_token_format"
+    | "http_error"
+    | "expo_error_status"
+    | "fetch_error";
+  httpStatus?: number;
+  expoStatus?: string;
 };
 
-function maskToken(token: string): string {
-  if (!token) return "none";
-  const safePrefix = token.slice(0, 8);
-  return `${safePrefix}...`;
+function isLikelyExpoPushToken(token: string): boolean {
+  return /^ExponentPushToken\[[^\]]+\]$/.test(token) || /^ExpoPushToken\[[^\]]+\]$/.test(token);
 }
 
 function getExpoProjectId(): string | undefined {
@@ -104,12 +110,30 @@ export async function registerForPushNotificationsAsync(): Promise<PushRegistrat
 }
 
 export async function sendDevTestNotificationToExpoToken(token: string): Promise<PushSendResult> {
+  return sendNotificationToExpoToken(token, "RecordQuest", "Test notification from RecordQuest");
+}
+
+export async function sendNotificationToExpoToken(
+  token: string,
+  title: string,
+  body: string
+): Promise<PushSendResult> {
   const scopedToken = token.trim();
+  const tokenFormatValid = isLikelyExpoPushToken(scopedToken);
 
   if (!scopedToken) {
     return {
       success: false,
       message: "No Expo push token available.",
+      reason: "missing_token",
+    };
+  }
+
+  if (!tokenFormatValid) {
+    return {
+      success: false,
+      message: "Expo push token format is invalid.",
+      reason: "invalid_token_format",
     };
   }
 
@@ -121,8 +145,8 @@ export async function sendDevTestNotificationToExpoToken(token: string): Promise
       },
       body: JSON.stringify({
         to: scopedToken,
-        title: "RecordQuest",
-        body: "Test notification from RecordQuest",
+        title,
+        body,
         sound: "default",
       }),
     });
@@ -138,6 +162,9 @@ export async function sendDevTestNotificationToExpoToken(token: string): Promise
       return {
         success: false,
         message: errorMessage,
+        reason: "http_error",
+        httpStatus: response.status,
+        expoStatus: payload.data?.status,
       };
     }
 
@@ -148,17 +175,24 @@ export async function sendDevTestNotificationToExpoToken(token: string): Promise
       return {
         success: false,
         message: errorMessage,
+        reason: "expo_error_status",
+        httpStatus: response.status,
+        expoStatus: resultStatus,
       };
     }
 
-    console.log("[RecordQuest][push] dev test sent to token:", maskToken(scopedToken));
-    return { success: true };
+    return {
+      success: true,
+      httpStatus: response.status,
+      expoStatus: resultStatus,
+    };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to send dev test notification.";
-    console.warn("[RecordQuest][push] dev test send error:", message);
+    const message = error instanceof Error ? error.message : "Failed to send notification.";
+    console.warn("[RecordQuest][push] send error:", message);
     return {
       success: false,
       message,
+      reason: "fetch_error",
     };
   }
 }
