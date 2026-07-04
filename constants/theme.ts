@@ -51,3 +51,33 @@ export const Fonts = Platform.select({
     mono: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
   },
 });
+
+export const RecordQuestTheme = {
+  colors: {
+    bg: "#06070B",
+    bgElevated: "#10121A",
+    bgCard: "rgba(17, 19, 26, 0.94)",
+    bgCardPressed: "rgba(24, 28, 40, 0.96)",
+    border: "rgba(248, 238, 220, 0.12)",
+    borderStrong: "rgba(139, 92, 246, 0.46)",
+    textPrimary: "#F6EEDC",
+    textSecondary: "#C5BDD7",
+    textMuted: "#9C95B2",
+    accent: "#8B5CF6",
+    accentSoft: "rgba(139, 92, 246, 0.14)",
+    accentStrong: "#7C3AED",
+    success: "#22C55E",
+    warning: "#F59E0B",
+  },
+  spacing: {
+    pageHorizontal: 20,
+    pageVertical: 16,
+    sectionGap: 18,
+    cardPadding: 14,
+  },
+  radius: {
+    card: 18,
+    pill: 999,
+    input: 14,
+  },
+};

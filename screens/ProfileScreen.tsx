@@ -175,6 +175,7 @@ export function ProfileScreen({
   const [isPublicCollectionLoading, setIsPublicCollectionLoading] = useState(false);
   const [publicCollectionError, setPublicCollectionError] = useState<string | null>(null);
   const [selectedFeatureTile, setSelectedFeatureTile] = useState<FeatureTile | null>(null);
+  const [showInsights, setShowInsights] = useState(false);
 
   const analytics = calculateCollectionAnalytics(records, wishlist, storeCheckIns, activity);
   const allBadges = useMemo(
@@ -514,61 +515,23 @@ export function ProfileScreen({
         <>
           <View style={styles.statsRow}>
             <StatCard value={records.length} label="Records" />
-            <StatCard value={wishlist.length} label="Wishlist" />
-            <StatCard value={unlockedBadgeCount} label="Badges" />
+            <StatCard value={followingCount} label="Following" />
+            <StatCard value={followerCount} label="Followers" />
           </View>
 
-          <Text style={styles.sectionTitle}>Quest Tracks</Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Achievements</Text>
+            <Text style={styles.sectionLinkText}>{allBadges.length} total</Text>
+          </View>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.featureTileRow}
+            contentContainerStyle={styles.achievementGrid}
           >
-            {FEATURE_TILES.map((tile) => {
-              const status = getFeatureStatus(tile);
-
-              return (
-                <Pressable
-                  key={tile.key}
-                  style={[
-                    styles.featureTile,
-                    {
-                      borderColor: `${tile.accentColor}66`,
-                    },
-                  ]}
-                  onPress={() => setSelectedFeatureTile(tile)}
-                >
-                  <View style={styles.featureTileTopRow}>
-                    <Text style={styles.featureTileIcon}>{tile.icon}</Text>
-                    <View style={[styles.featureTileStatusPill, { borderColor: `${tile.accentColor}80`, backgroundColor: `${tile.accentColor}26` }] }>
-                      <Text style={styles.featureTileStatusText}>{status.label}</Text>
-                    </View>
-                  </View>
-                  <Text style={styles.featureTileTitle} numberOfLines={1}>{tile.title}</Text>
-                  <Text style={styles.featureTileSubtitle} numberOfLines={2}>{tile.subtitle}</Text>
-                  <Text style={styles.featureTileProgress} numberOfLines={1}>{status.progressText}</Text>
-                </Pressable>
-              );
-            })}
+            {allBadges.map((badge) => (
+              <AchievementBadgeCard key={badge.id} badge={badge} />
+            ))}
           </ScrollView>
-
-          <CollectionAnalyticsDashboard analytics={analytics} />
-
-          <Text style={styles.sectionTitle}>Achievements</Text>
-          {achievementCategories.map((category) => (
-            <View key={category.title} style={styles.achievementCategory}>
-              <Text style={styles.achievementCategoryTitle}>{category.title}</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.achievementGrid}
-              >
-                {category.badges.map((badge) => (
-                  <AchievementBadgeCard key={badge.id} badge={badge} />
-                ))}
-              </ScrollView>
-            </View>
-          ))}
 
           <Text style={styles.sectionTitle}>Recent Activity</Text>
           {activity.length === 0 ? (
@@ -583,6 +546,55 @@ export function ProfileScreen({
               </View>
             ))
           )}
+
+          <Pressable
+            style={styles.insightsToggleButton}
+            onPress={() => setShowInsights((current) => !current)}
+          >
+            <Text style={styles.insightsToggleButtonText}>
+              {showInsights ? "Hide Insights" : "View Insights"}
+            </Text>
+          </Pressable>
+
+          {showInsights ? (
+            <>
+              <Text style={styles.sectionTitle}>Quest Tracks</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.featureTileRow}
+              >
+                {FEATURE_TILES.map((tile) => {
+                  const status = getFeatureStatus(tile);
+
+                  return (
+                    <Pressable
+                      key={tile.key}
+                      style={[
+                        styles.featureTile,
+                        {
+                          borderColor: `${tile.accentColor}66`,
+                        },
+                      ]}
+                      onPress={() => setSelectedFeatureTile(tile)}
+                    >
+                      <View style={styles.featureTileTopRow}>
+                        <Text style={styles.featureTileIcon}>{tile.icon}</Text>
+                        <View style={[styles.featureTileStatusPill, { borderColor: `${tile.accentColor}80`, backgroundColor: `${tile.accentColor}26` }] }>
+                          <Text style={styles.featureTileStatusText}>{status.label}</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.featureTileTitle} numberOfLines={1}>{tile.title}</Text>
+                      <Text style={styles.featureTileSubtitle} numberOfLines={2}>{tile.subtitle}</Text>
+                      <Text style={styles.featureTileProgress} numberOfLines={1}>{status.progressText}</Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              <CollectionAnalyticsDashboard analytics={analytics} />
+            </>
+          ) : null}
 
           <View style={styles.signOutSection}>
             <Pressable
@@ -674,18 +686,18 @@ const styles = StyleSheet.create({
     backgroundColor: "#050509",
   },
   profileCard: {
-    backgroundColor: "rgba(18, 16, 34, 0.92)",
+    backgroundColor: "rgba(15, 17, 24, 0.96)",
     borderWidth: 1,
-    borderColor: "rgba(124, 58, 237, 0.28)",
+    borderColor: "rgba(248, 238, 220, 0.12)",
     borderRadius: 18,
     padding: 18,
     flexDirection: "row",
     gap: 14,
     marginBottom: 28,
     shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 14,
-    elevation: 7,
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
   },
   avatar: {
     width: 70,
@@ -726,15 +738,15 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
   },
   followMetaText: {
-    color: "#E8DCCC",
+    color: "#C5BDD7",
     fontSize: 11,
     fontWeight: "600",
     paddingHorizontal: 9,
     paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "rgba(212, 175, 55, 0.30)",
-    backgroundColor: "rgba(212, 175, 55, 0.12)",
+    borderColor: "rgba(248, 238, 220, 0.14)",
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
   },
   followButton: {
     marginTop: 12,
@@ -914,11 +926,23 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     color: "#F8EED4",
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: "800",
     marginBottom: 14,
     marginTop: 20,
     letterSpacing: 0.3,
+  },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 18,
+    marginBottom: 10,
+  },
+  sectionLinkText: {
+    color: "#BEB5D3",
+    fontSize: 12,
+    fontWeight: "700",
   },
   analyticsGrid: {
     flexDirection: "row",
@@ -929,8 +953,8 @@ const styles = StyleSheet.create({
   achievementCategory: {
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: "rgba(124, 58, 237, 0.22)",
-    backgroundColor: "rgba(18, 16, 34, 0.86)",
+    borderColor: "rgba(248, 238, 220, 0.10)",
+    backgroundColor: "rgba(15, 17, 24, 0.96)",
     borderRadius: 16,
     padding: 14,
   },
@@ -946,8 +970,9 @@ const styles = StyleSheet.create({
   },
   achievementGrid: {
     flexDirection: "row",
-    gap: 10,
-    paddingRight: 8,
+    gap: 12,
+    paddingRight: 12,
+    paddingBottom: 6,
   },
   emptyFeatureCard: {
     borderWidth: 1,
@@ -969,17 +994,34 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   activityCard: {
-    backgroundColor: "rgba(18, 16, 34, 0.90)",
-    borderWidth: 1,
-    borderColor: "rgba(124, 58, 237, 0.22)",
-    borderRadius: 12,
-    padding: 14,
+    backgroundColor: "transparent",
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(248, 238, 220, 0.10)",
+    borderRadius: 0,
+    paddingHorizontal: 2,
+    paddingVertical: 12,
     marginBottom: 8,
     marginTop: 0,
   },
   activityText: {
-    color: "#A7A1BD",
-    fontSize: 13,
+    color: "#D0C9DF",
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  insightsToggleButton: {
+    marginTop: 8,
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.14)",
+    backgroundColor: "rgba(255, 255, 255, 0.03)",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  insightsToggleButtonText: {
+    color: "#CFC7E6",
+    fontSize: 12,
+    fontWeight: "700",
   },
   publicRecordCard: {
     backgroundColor: "rgba(18, 16, 34, 0.90)",

@@ -16,6 +16,7 @@ export type AlbumSearchResult = {
   year: string;
   cover: string;
   genre: string;
+  format?: "album" | "ep" | "single";
 };
 
 type ScoredAlbumSearchResult = AlbumSearchResult & { score: number };
@@ -224,6 +225,16 @@ function buildGenre(primaryType?: string, secondaryTypes?: string[]) {
   }
 
   return uniqueCandidates[0];
+}
+
+function buildReleaseFormat(primaryType?: string): "album" | "ep" | "single" | undefined {
+  const normalizedType = normalizeWords(primaryType ?? "");
+
+  if (normalizedType === "album") return "album";
+  if (normalizedType === "ep") return "ep";
+  if (normalizedType === "single") return "single";
+
+  return undefined;
 }
 
 function searchCacheKey(album: string, artist: string) {
@@ -497,6 +508,14 @@ function releaseGroupScore(
     score += 4;
   }
 
+  if (normalizedSecondaryTypes.some((value) => value.includes("remix")) && !includesAny(searchAlbum, ["remix"])) {
+    score -= 16;
+  }
+
+  if (normalizedSecondaryTypes.some((value) => value.includes("demo")) && !includesAny(searchAlbum, ["demo"])) {
+    score -= 16;
+  }
+
   if (normalizedSecondaryTypes.some((value) => value.includes("compilation")) && wantsAlbum) {
     score -= 28;
   }
@@ -670,6 +689,7 @@ async function mapReleaseGroupsToResults(
       year,
       cover: "",
       genre: buildGenre(releaseGroup["primary-type"], releaseGroup["secondary-types"]),
+      format: buildReleaseFormat(releaseGroup["primary-type"]),
       score,
     };
   });

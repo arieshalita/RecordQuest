@@ -1,5 +1,6 @@
 import React from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet, Animated } from "react-native";
+import { RecordQuestTheme } from "../constants/theme";
 
 interface NavItemProps {
   label: string;
@@ -8,9 +9,44 @@ interface NavItemProps {
 }
 
 export function NavItem({ label, active, onPress }: NavItemProps) {
+  const animatedValue = React.useRef(new Animated.Value(active ? 1 : 0)).current;
+
+  React.useEffect(() => {
+    Animated.timing(animatedValue, {
+      toValue: active ? 1 : 0,
+      duration: 160,
+      useNativeDriver: true,
+    }).start();
+  }, [active, animatedValue]);
+
+  const activeScale = animatedValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.98, 1],
+  });
+
+  const activeOpacity = animatedValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.8, 1],
+  });
+
+  const icon = label === "Home"
+    ? "⌂"
+    : label === "Library"
+      ? "◉"
+      : label === "Stores"
+        ? "⌖"
+        : label === "Wishlist"
+          ? "♡"
+          : "◌";
+
   return (
-    <Pressable style={[styles.navItem, active && styles.navItemActive]} onPress={onPress}>
-      <View style={[styles.navDot, active && styles.navDotActive]} />
+    <Pressable
+      style={({ pressed }) => [styles.navItem, pressed ? styles.navItemPressed : null]}
+      onPress={onPress}
+    >
+      <Animated.View style={{ transform: [{ scale: activeScale }], opacity: activeOpacity }}>
+        <Text style={[styles.navIcon, active && styles.navIconActive]}>{icon}</Text>
+      </Animated.View>
       <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
     </Pressable>
   );
@@ -22,32 +58,32 @@ const styles = StyleSheet.create({
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
-    gap: 4,
-    paddingVertical: 8,
+    gap: 3,
+    paddingVertical: 6,
     paddingHorizontal: 4,
-    borderRadius: 12,
+    borderRadius: 10,
     minWidth: 0,
   },
-  navItemActive: {
-    backgroundColor: "rgba(124, 58, 237, 0.24)",
+  navItemPressed: {
+    opacity: 0.82,
   },
-  navDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#57516C",
+  navIcon: {
+    color: "#605B70",
+    fontSize: 14,
+    lineHeight: 16,
+    fontWeight: "600",
   },
-  navDotActive: {
-    backgroundColor: "#d4af37",
+  navIconActive: {
+    color: RecordQuestTheme.colors.accent,
   },
   navText: {
-    color: "#a7a1bd",
-    fontSize: 11,
-    fontWeight: "700",
-    lineHeight: 13,
+    color: RecordQuestTheme.colors.textMuted,
+    fontSize: 9,
+    fontWeight: "600",
+    lineHeight: 12,
     textAlign: "center",
   },
   navTextActive: {
-    color: "#fff4d6",
+    color: RecordQuestTheme.colors.accent,
   },
 });

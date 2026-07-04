@@ -57,6 +57,7 @@ export type AlbumSearchResult = {
   year: string;
   cover: string;
   genre: string;
+  format?: "album" | "ep" | "single";
 };
 
 export type CollectionAnalytics = {

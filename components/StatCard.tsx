@@ -1,5 +1,6 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
+import { RecordQuestTheme } from "../constants/theme";
 
 interface StatCardProps {
   value: number;
@@ -17,28 +18,28 @@ export function StatCard({ value, label }: StatCardProps) {
 
 const styles = StyleSheet.create({
   statCard: {
-    backgroundColor: "rgba(20, 18, 38, 0.90)",
-    borderRadius: 18,
-    paddingVertical: 16,
-    paddingHorizontal: 12,
+    backgroundColor: RecordQuestTheme.colors.bgCard,
+    borderRadius: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 10,
     alignItems: "center",
     justifyContent: "center",
     flex: 1,
     borderWidth: 1,
-    borderColor: "rgba(124, 58, 237, 0.26)",
+    borderColor: "rgba(248, 238, 220, 0.10)",
     shadowColor: "#000",
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    elevation: 7,
+    shadowOpacity: 0.07,
+    shadowRadius: 5,
+    elevation: 1,
   },
   statValue: {
-    color: "#f8efd5",
-    fontSize: 26,
+    color: RecordQuestTheme.colors.textPrimary,
+    fontSize: 24,
     fontWeight: "900",
     marginBottom: 4,
   },
   statLabel: {
-    color: "#c7c2db",
+    color: RecordQuestTheme.colors.textMuted,
     fontSize: 11,
     fontWeight: "600",
     letterSpacing: 0.3,

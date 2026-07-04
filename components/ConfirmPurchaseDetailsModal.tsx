@@ -1,6 +1,7 @@
 import React from "react";
 import { View, Text, Pressable, TextInput, StyleSheet } from "react-native";
 import type { RecordItem } from "../hooks/types";
+import { RecordQuestTheme } from "../constants/theme";
 
 type ConfirmPurchaseDetailsModalProps = {
   visible: boolean;
@@ -118,25 +119,27 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    backgroundColor: "rgba(0, 0, 0, 0.62)",
     justifyContent: "flex-end",
     zIndex: 100,
   },
   modalContent: {
-    backgroundColor: "#12102",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    backgroundColor: "#0F1118",
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
     padding: 20,
     paddingBottom: 30,
+    borderWidth: 1,
+    borderColor: RecordQuestTheme.colors.border,
   },
   modalTitle: {
-    color: "#FFF4D6",
+    color: RecordQuestTheme.colors.textPrimary,
     fontSize: 16,
     fontWeight: "700",
     marginBottom: 8,
   },
   modalSubtitle: {
-    color: "#A7A1BD",
+    color: RecordQuestTheme.colors.textSecondary,
     fontSize: 13,
     marginBottom: 20,
   },
@@ -144,18 +147,18 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   fieldLabel: {
-    color: "#D4AF37",
+    color: RecordQuestTheme.colors.textSecondary,
     fontSize: 12,
     fontWeight: "600",
     marginBottom: 6,
   },
   input: {
-    backgroundColor: "#1A1830",
+    backgroundColor: RecordQuestTheme.colors.bgElevated,
     borderWidth: 1,
-    borderColor: "#3E3B5C",
-    borderRadius: 8,
+    borderColor: RecordQuestTheme.colors.border,
+    borderRadius: 10,
     padding: 12,
-    color: "#FFF4D6",
+    color: RecordQuestTheme.colors.textPrimary,
     fontSize: 14,
   },
   conditionPicker: {
@@ -164,24 +167,24 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   conditionButton: {
-    backgroundColor: "#1A1830",
+    backgroundColor: RecordQuestTheme.colors.bgElevated,
     borderWidth: 1,
-    borderColor: "#3E3B5C",
+    borderColor: RecordQuestTheme.colors.border,
     borderRadius: 6,
     paddingHorizontal: 10,
     paddingVertical: 8,
   },
   conditionButtonActive: {
-    backgroundColor: "#7C3AED",
-    borderColor: "#7C3AED",
+    backgroundColor: RecordQuestTheme.colors.accentSoft,
+    borderColor: RecordQuestTheme.colors.borderStrong,
   },
   conditionButtonText: {
-    color: "#A7A1BD",
+    color: RecordQuestTheme.colors.textSecondary,
     fontSize: 12,
     fontWeight: "500",
   },
   conditionButtonTextActive: {
-    color: "#FFF4D6",
+    color: RecordQuestTheme.colors.textPrimary,
   },
   modalButtons: {
     flexDirection: "row",
@@ -195,18 +198,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   modalButtonPrimary: {
-    backgroundColor: "#7C3AED",
+    backgroundColor: RecordQuestTheme.colors.accent,
   },
   modalButtonTextPrimary: {
-    color: "#FFF4D6",
+    color: RecordQuestTheme.colors.textPrimary,
     fontWeight: "700",
     fontSize: 14,
   },
   modalButtonSecondary: {
-    backgroundColor: "#3E3B5C",
+    backgroundColor: RecordQuestTheme.colors.bgElevated,
+    borderWidth: 1,
+    borderColor: RecordQuestTheme.colors.border,
   },
   modalButtonTextSecondary: {
-    color: "#A7A1BD",
+    color: RecordQuestTheme.colors.textSecondary,
     fontWeight: "600",
     fontSize: 14,
   },

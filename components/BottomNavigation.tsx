@@ -1,6 +1,7 @@
 import React from "react";
 import { View, StyleSheet } from "react-native";
 import { NavItem } from "./NavItem";
+import { RecordQuestTheme } from "../constants/theme";
 
 interface BottomNavigationProps {
   activeScreen: string;
@@ -32,13 +33,14 @@ export function BottomNavigation({ activeScreen, onNavigate }: BottomNavigationP
 const styles = StyleSheet.create({
   nav: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    justifyContent: "space-around",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingHorizontal: 10,
+    paddingTop: 12,
+    paddingBottom: 14,
     borderTopWidth: 1,
-    borderTopColor: "rgba(124, 58, 237, 0.12)",
-    backgroundColor: "#0a0a0f",
+    borderTopColor: RecordQuestTheme.colors.border,
+    backgroundColor: "rgba(9, 10, 15, 0.98)",
     gap: 8,
   },
 });

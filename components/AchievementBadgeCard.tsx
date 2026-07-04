@@ -72,24 +72,24 @@ export function AchievementBadgeCard({ badge }: AchievementBadgeCardProps) {
 
 const styles = StyleSheet.create({
   badgeCard: {
-    backgroundColor: "rgba(18, 16, 38, 0.96)",
-    borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 12,
+    backgroundColor: "rgba(15, 17, 24, 0.96)",
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
     alignItems: "center",
     justifyContent: "space-between",
-    width: 150,
-    minHeight: 152,
-    borderWidth: 2,
+    width: 128,
+    minHeight: 142,
+    borderWidth: 1,
     marginBottom: 2,
   },
   badgeCardUnlocked: {
-    borderColor: "rgba(212, 175, 55, 0.40)",
-    backgroundColor: "rgba(18, 16, 38, 0.98)",
+    borderColor: "rgba(248, 238, 220, 0.16)",
+    backgroundColor: "rgba(15, 17, 24, 0.98)",
   },
   badgeCardLocked: {
-    borderColor: "rgba(87, 81, 108, 0.20)",
-    backgroundColor: "rgba(18, 16, 38, 0.60)",
+    borderColor: "rgba(87, 81, 108, 0.16)",
+    backgroundColor: "rgba(15, 17, 24, 0.74)",
   },
   badgeEmoji: {
     fontSize: 30,
@@ -103,7 +103,7 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   badgeLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "800",
     marginBottom: 4,
     textAlign: "center",
@@ -117,7 +117,7 @@ const styles = StyleSheet.create({
     color: "#57516C",
   },
   badgeRequirement: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: "600",
     marginBottom: 6,
     textAlign: "center",
@@ -131,7 +131,7 @@ const styles = StyleSheet.create({
     color: "#57516C",
   },
   badgeProgress: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "700",
     marginBottom: 4,
     textAlign: "center",
@@ -158,7 +158,7 @@ const styles = StyleSheet.create({
   },
   badgeEarnedDate: {
     color: "#CDBA90",
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: "600",
     lineHeight: 12,
     marginTop: 2,

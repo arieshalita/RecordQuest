@@ -1,5 +1,6 @@
 import React from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
+import { RecordQuestTheme } from "../constants/theme";
 
 interface HomeCardProps {
   title: string;
@@ -12,14 +13,15 @@ interface HomeCardProps {
 export function HomeCard({ title, subtitle, onPress, accentColor, icon = "♪" }: HomeCardProps) {
   return (
     <Pressable
-      style={[
+      style={({ pressed }) => [
         styles.homeCard,
         accentColor
           ? {
-              borderColor: accentColor,
-              backgroundColor: `${accentColor}22`,
+              borderColor: `${accentColor}66`,
+              backgroundColor: `${accentColor}16`,
             }
           : null,
+        pressed ? styles.homeCardPressed : null,
       ]}
       onPress={onPress}
     >
@@ -45,20 +47,24 @@ export function HomeCard({ title, subtitle, onPress, accentColor, icon = "♪" }
 
 const styles = StyleSheet.create({
   homeCard: {
-    backgroundColor: "rgba(20, 18, 38, 0.88)",
-    borderRadius: 20,
-    paddingVertical: 14,
+    backgroundColor: RecordQuestTheme.colors.bgCard,
+    borderRadius: 15,
+    paddingVertical: 15,
     paddingHorizontal: 16,
-    minHeight: 84,
+    minHeight: 86,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "rgba(124, 58, 237, 0.24)",
+    borderColor: "rgba(248, 238, 220, 0.10)",
     shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 14,
-    elevation: 8,
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  homeCardPressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.99 }],
   },
   leftRow: {
     flexDirection: "row",
@@ -71,27 +77,27 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: "rgba(124, 58, 237, 0.22)",
+    backgroundColor: "rgba(248, 238, 220, 0.08)",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   },
   iconText: {
-    color: "#f5e9cc",
-    fontSize: 15,
+    color: RecordQuestTheme.colors.textPrimary,
+    fontSize: 14,
   },
   textWrap: {
     flex: 1,
     minWidth: 0,
   },
   homeCardTitle: {
-    color: "#fff4d6",
+    color: RecordQuestTheme.colors.textPrimary,
     fontSize: 15,
     fontWeight: "800",
     marginBottom: 2,
   },
   homeCardSubtitle: {
-    color: "#c7c2db",
+    color: RecordQuestTheme.colors.textSecondary,
     fontSize: 11,
     lineHeight: 15,
   },
@@ -101,10 +107,10 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(124, 58, 237, 0.20)",
+    backgroundColor: "rgba(248, 238, 220, 0.08)",
   },
   homeArrow: {
-    color: "#fff4d6",
+    color: RecordQuestTheme.colors.textPrimary,
     fontSize: 20,
     fontWeight: "700",
   },

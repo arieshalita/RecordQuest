@@ -82,12 +82,17 @@ const MAX_RESULTS = 15;
 const STORE_DEDUP_DISTANCE_MILES = 0.2;
 const ENABLE_OSM_SUPPLEMENTAL_FOR_BETA = false;
 const GOOGLE_PLACES_TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText";
-const GOOGLE_PLACES_TEXT_QUERY = "record store vinyl music store";
+const GOOGLE_PLACES_TEXT_QUERIES = [
+  "record store",
+  "vinyl records",
+  "music store vinyl",
+];
 const GOOGLE_PLACES_FIELD_MASK =
   "places.id,places.displayName,places.formattedAddress,places.location,places.businessStatus,places.types";
-const GOOGLE_PLACES_PAGE_SIZE = 15;
+const GOOGLE_PLACES_PAGE_SIZE = 14;
 const GOOGLE_BETA_RADIUS_METERS = SEARCH_RADIUS_METERS;
 const GOOGLE_PLACES_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY?.trim();
+const GOOGLE_CACHE_VERSION = "v2-multi-query";
 
 const googlePlacesSessionCache = new Map<string, StoreItem[]>();
 
@@ -295,7 +300,28 @@ function getStorePriorityPenalty(store: Pick<CuratedStoreSeed, "storeCategory">)
 
 function getGoogleCacheKey(latitude: number, longitude: number): string {
   // Round to keep cache stable for small GPS drift while staying location-specific.
-  return `${latitude.toFixed(2)}:${longitude.toFixed(2)}`;
+  return `${GOOGLE_CACHE_VERSION}:${latitude.toFixed(2)}:${longitude.toFixed(2)}`;
+}
+
+function getGoogleStoreSignalBonus(place: Pick<GooglePlace, "displayName" | "types">): number {
+  const name = (place.displayName?.text ?? "").toLowerCase();
+  const types = (place.types ?? []).map((type) => type.toLowerCase());
+
+  let bonus = 0;
+
+  if (/record|vinyl|lp/.test(name)) {
+    bonus += 0.24;
+  }
+
+  if (types.some((type) => /record|music/.test(type))) {
+    bonus += 0.14;
+  }
+
+  if (name.includes("newbury comics")) {
+    bonus += 0.08;
+  }
+
+  return Math.min(0.34, bonus);
 }
 
 function getGoogleStoreCategory(place: Pick<GooglePlace, "displayName" | "types">): "record-store" | "media-store" | "bookstore" {
@@ -381,7 +407,9 @@ function mapGooglePlacesToStores(
 
     const category = getGoogleStoreCategory(place);
     const distanceMiles = haversineDistanceMiles(latitude, longitude, lat, lon);
-    const rankingMiles = distanceMiles + getStorePriorityPenalty({ storeCategory: category });
+    const rankingPenalty = getStorePriorityPenalty({ storeCategory: category });
+    const rankingBonus = getGoogleStoreSignalBonus(place);
+    const rankingMiles = Math.max(0, distanceMiles + rankingPenalty - rankingBonus);
 
     candidates.push({
       id: `google-${placeId}`,
@@ -422,44 +450,64 @@ async function fetchGooglePlacesNearby(latitude: number, longitude: number): Pro
     return cached;
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const perQueryResults = await Promise.all(
+    GOOGLE_PLACES_TEXT_QUERIES.map(async (textQuery) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  try {
-    const response = await fetch(GOOGLE_PLACES_TEXT_SEARCH_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": GOOGLE_PLACES_API_KEY,
-        "X-Goog-FieldMask": GOOGLE_PLACES_FIELD_MASK,
-      },
-      body: JSON.stringify({
-        textQuery: GOOGLE_PLACES_TEXT_QUERY,
-        pageSize: GOOGLE_PLACES_PAGE_SIZE,
-        locationBias: {
-          circle: {
-            center: {
-              latitude,
-              longitude,
-            },
-            radius: GOOGLE_BETA_RADIUS_METERS,
+      try {
+        const response = await fetch(GOOGLE_PLACES_TEXT_SEARCH_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": GOOGLE_PLACES_API_KEY,
+            "X-Goog-FieldMask": GOOGLE_PLACES_FIELD_MASK,
           },
-        },
-      }),
-      signal: controller.signal,
-    });
+          body: JSON.stringify({
+            textQuery,
+            pageSize: GOOGLE_PLACES_PAGE_SIZE,
+            locationBias: {
+              circle: {
+                center: {
+                  latitude,
+                  longitude,
+                },
+                radius: GOOGLE_BETA_RADIUS_METERS,
+              },
+            },
+          }),
+          signal: controller.signal,
+        });
 
-    if (!response.ok) {
-      throw new Error(`Google Places request failed with status ${response.status}`);
+        if (!response.ok) {
+          throw new Error(`Google Places request failed with status ${response.status} for query \"${textQuery}\"`);
+        }
+
+        const payload = (await response.json()) as GooglePlacesTextSearchResponse;
+        return payload.places ?? [];
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    })
+  );
+
+  const dedupedByPlaceId = new Map<string, GooglePlace>();
+  for (const places of perQueryResults) {
+    for (const place of places) {
+      const placeId = place.id?.trim();
+      if (!placeId) {
+        continue;
+      }
+
+      if (!dedupedByPlaceId.has(placeId)) {
+        dedupedByPlaceId.set(placeId, place);
+      }
     }
-
-    const payload = (await response.json()) as GooglePlacesTextSearchResponse;
-    const stores = mapGooglePlacesToStores(payload.places ?? [], latitude, longitude);
-    googlePlacesSessionCache.set(cacheKey, stores);
-    return stores;
-  } finally {
-    clearTimeout(timeoutId);
   }
+
+  const stores = mapGooglePlacesToStores(Array.from(dedupedByPlaceId.values()), latitude, longitude);
+  googlePlacesSessionCache.set(cacheKey, stores);
+  return stores;
 }
 
 function getCuratedSourceOfTruth(): CuratedStoreSeed[] {
@@ -937,6 +985,21 @@ async function getCurrentLocation(): Promise<{ latitude: number; longitude: numb
       clearTimeout(timeoutId);
     }
   }
+}
+
+export async function invalidateNearbyStoresCacheForCurrentLocation(): Promise<void> {
+  if (!GOOGLE_PLACES_API_KEY) {
+    return;
+  }
+
+  const permission = await Location.requestForegroundPermissionsAsync();
+  if (!permission.granted) {
+    return;
+  }
+
+  const { latitude, longitude } = await getCurrentLocation();
+  const cacheKey = getGoogleCacheKey(latitude, longitude);
+  googlePlacesSessionCache.delete(cacheKey);
 }
 
 export async function discoverNearbyStores(): Promise<StoreDiscoveryResult> {

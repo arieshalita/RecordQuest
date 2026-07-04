@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
   SafeAreaView,
   StatusBar,
@@ -13,6 +13,7 @@ import {
   Linking,
   Platform,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   loadRecordQuestState,
   saveRecordQuestState,
@@ -41,6 +42,7 @@ import { isSupabaseDataModeEnabled } from "../../constants/data-mode";
 import {
   discoverNearbyStores,
   getCuratedFallbackStores,
+  invalidateNearbyStoresCacheForCurrentLocation,
   type StoreDiscoveryResult,
 } from "../../hooks/store-discovery";
 import { getDiscoverUsers, type DiscoverUser } from "../../hooks/discover-users";
@@ -121,6 +123,7 @@ const ALBUM_TYPEAHEAD_DEBOUNCE_MS = 380;
 // ═════════════════════════════════════════════════════════════════════════
 
 export default function App() {
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const [screen, setScreen] = useState("Home");
   const [records, setRecords] = useState<RecordItem[]>(starterRecords);
@@ -193,8 +196,104 @@ export default function App() {
     .flatMap((category) => category.badges)
     .filter((badge) => badge.unlocked).length;
 
+  const homeDisplayName = useMemo(() => {
+    const metadataName = typeof user?.user_metadata?.display_name === "string"
+      ? user.user_metadata.display_name.trim()
+      : "";
+
+    if (metadataName.length > 0) {
+      return metadataName;
+    }
+
+    const metadataUsername = typeof user?.user_metadata?.username === "string"
+      ? user.user_metadata.username.trim()
+      : "";
+
+    if (metadataUsername.length > 0) {
+      return metadataUsername;
+    }
+
+    if (user?.email) {
+      const fallback = user.email.split("@")[0]?.trim();
+      if (fallback) {
+        return fallback;
+      }
+    }
+
+    return "Collector";
+  }, [user?.email, user?.user_metadata?.display_name, user?.user_metadata?.username]);
+
+  const visitedStoreCount = useMemo(
+    () => Object.values(storeCheckIns).filter((count) => (count ?? 0) > 0).length,
+    [storeCheckIns]
+  );
+
   const placeholderCover =
     "https://upload.wikimedia.org/wikipedia/commons/3/3c/No-album-art.png";
+
+  const loadNearbyStores = useCallback(async (invalidateCacheForCurrentLocation: boolean) => {
+    console.log("[RecordQuest][stores] loading started", {
+      refresh: invalidateCacheForCurrentLocation,
+    });
+
+    setIsLoadingStores(true);
+    if (invalidateCacheForCurrentLocation) {
+      setStoresMessage("Refreshing nearby stores...");
+    }
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let result: StoreDiscoveryResult = {
+      stores: curatedFallbackStores,
+      notice: "Showing recommended record stores near you.",
+      usingFallback: true,
+    };
+
+    try {
+      if (invalidateCacheForCurrentLocation) {
+        await invalidateNearbyStoresCacheForCurrentLocation();
+      }
+
+      result = await Promise.race([
+        discoverNearbyStores(),
+        new Promise<StoreDiscoveryResult>((resolve) => {
+          timeoutId = setTimeout(() => {
+            resolve({
+              stores: curatedFallbackStores,
+              notice: "Showing recommended record stores near you.",
+              usingFallback: true,
+            });
+          }, STORES_UI_TIMEOUT_MS);
+        }),
+      ]);
+    } catch {
+      result = {
+        stores: curatedFallbackStores,
+        notice: "Showing recommended record stores near you.",
+        usingFallback: true,
+      };
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      setStores(result.stores);
+      setStoresMessage(result.notice);
+      setHasLoadedStores(true);
+      setIsLoadingStores(false);
+      console.log("[RecordQuest][stores] loading ended", {
+        usingFallback: result.usingFallback,
+        refresh: invalidateCacheForCurrentLocation,
+      });
+    }
+  }, []);
+
+  const refreshNearbyStores = useCallback(() => {
+    if (isLoadingStores) {
+      return;
+    }
+
+    void loadNearbyStores(true);
+  }, [isLoadingStores, loadNearbyStores]);
 
   useEffect(() => {
     let isMounted = true;
@@ -339,61 +438,10 @@ export default function App() {
     if (screen !== "Stores" || detailStore) return;
     if (hasLoadedStores) return;
 
-    let isMounted = true;
-
-    async function loadNearbyStores() {
-      console.log("[RecordQuest][stores] loading started");
-      setIsLoadingStores(true);
-
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-      let result: StoreDiscoveryResult = {
-        stores: curatedFallbackStores,
-        notice: "Showing recommended record stores near you.",
-        usingFallback: true,
-      };
-
-      try {
-        result = await Promise.race([
-          discoverNearbyStores(),
-          new Promise<StoreDiscoveryResult>((resolve) => {
-            timeoutId = setTimeout(() => {
-              resolve({
-                stores: curatedFallbackStores,
-                notice: "Showing recommended record stores near you.",
-                usingFallback: true,
-              });
-            }, STORES_UI_TIMEOUT_MS);
-          }),
-        ]);
-      } catch {
-        result = {
-          stores: curatedFallbackStores,
-          notice: "Showing recommended record stores near you.",
-          usingFallback: true,
-        };
-      } finally {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-
-        if (!isMounted) return;
-
-        setStores(result.stores);
-        setStoresMessage(result.notice);
-        setHasLoadedStores(true);
-        setIsLoadingStores(false);
-        console.log("[RecordQuest][stores] loading ended", {
-          usingFallback: result.usingFallback,
-        });
-      }
-    }
-
-    loadNearbyStores();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [screen, detailStore, hasLoadedStores]);
+    void loadNearbyStores(false).catch(() => {
+      // Errors are handled inside loadNearbyStores.
+    });
+  }, [screen, detailStore, hasLoadedStores, loadNearbyStores]);
 
   useEffect(() => {
     if (screen !== "DiscoverUsers") return;
@@ -458,6 +506,24 @@ export default function App() {
     if (days < 7) return `${days}d ago`;
 
     return new Date(timestamp).toLocaleDateString();
+  }
+
+  function formatFollowingEntry(entry: string): string {
+    const normalized = entry.trim();
+
+    if (normalized.toLowerCase().startsWith("added ")) {
+      return normalized.replace(/^added\s+/i, "Added ");
+    }
+
+    if (normalized.toLowerCase().startsWith("found ")) {
+      return normalized.replace(/^found\s+/i, "Found ");
+    }
+
+    if (normalized.toLowerCase().startsWith("checked in")) {
+      return normalized.replace(/^checked\s+in\s+/i, "Checked in at ");
+    }
+
+    return normalized;
   }
 
   const openDiscoverUsers = useCallback(() => {
@@ -921,46 +987,52 @@ export default function App() {
         <ScrollView contentContainerStyle={styles.page}>
           <View style={styles.pageAtmosphereGlow} />
           <Text style={styles.logo}>RecordQuest</Text>
-          <Text style={styles.tagline}>Discover. Collect. Spin.</Text>
+          <Text style={styles.tagline}>Discover. Collect. Play.</Text>
+
+          <View style={styles.homeGreetingWrap}>
+            <Text style={styles.homeGreetingKicker}>Good morning</Text>
+            <Text style={styles.homeGreetingTitle}>{homeDisplayName}</Text>
+            <Text style={styles.homeGreetingSub}>Ready to spin something great?</Text>
+          </View>
 
           <View style={styles.hero}>
             <View style={styles.heroGlow} />
             <Text style={styles.heroKicker}>TODAY'S QUEST</Text>
-            <Text style={styles.heroTitle}>Find your next favorite record.</Text>
+            <Text style={styles.heroTitle}>Discover one album for your next weekend spin.</Text>
             <Text style={styles.heroText}>
-              Track your collection, build a wishlist, and turn crate digging into a game.
+              Use Search to find it, then add it to Collection or Wishlist in one flow.
             </Text>
           </View>
 
           <View style={styles.statsRow}>
             <StatCard value={records.length} label="Records" />
             <StatCard value={wishlist.length} label="Wishlist" />
-            <StatCard value={unlockedBadgeCount} label="Badges" />
+            <StatCard value={visitedStoreCount} label="Stores Visited" />
           </View>
 
-          <Text style={styles.sectionTitle}>Explore</Text>
+          <Text style={styles.sectionTitle}>Quick Actions</Text>
 
           <View style={styles.dashboardGrid}>
             <HomeCard
-              title="Find Stores"
-              subtitle="Record shops and crate spots"
-              icon="📍"
-              onPress={() => setScreen("Stores")}
-              accentColor="#14B8A6"
-            />
-            <HomeCard
               title="My Collection"
-              subtitle="Albums you own"
+              subtitle="View, sort, and search your records"
               icon="💿"
               onPress={() => setScreen("Collection")}
               accentColor="#7C3AED"
             />
             <HomeCard
               title="Wishlist"
-              subtitle="Records to hunt next"
+              subtitle="Albums to hunt down next"
               icon="💗"
               onPress={() => setScreen("Wishlist")}
               accentColor="#EC4899"
+            />
+            <HomeCard
+              title="Find Stores"
+              subtitle="Nearby shops and crate spots"
+              icon="📍"
+              onPress={() => setScreen("Stores")}
+              accentColor="#14B8A6"
             />
             <HomeCard
               title="Find Friends"
@@ -968,18 +1040,6 @@ export default function App() {
               icon="👥"
               onPress={openDiscoverUsers}
               accentColor="#F59E0B"
-            />
-            <HomeCard
-              title="Profile"
-              subtitle="Stats, badges, and activity"
-              icon="⭐"
-              onPress={() => {
-                setSelectedProfileUserId(null);
-                setSelectedProfileDisplayName(null);
-                setProfileBackScreen("Home");
-                setScreen("Profile");
-              }}
-              accentColor="#A78BFA"
             />
           </View>
 
@@ -1043,7 +1103,7 @@ export default function App() {
                     <Text style={styles.followingActivityTime}>{formatActivityTime(item.createdAt)}</Text>
                   </View>
                   <View style={styles.followingActivityTextWrap}>
-                    <Text style={styles.followingActivityEntry}>{item.entry}</Text>
+                    <Text style={styles.followingActivityEntry}>{formatFollowingEntry(item.entry)}</Text>
                     {item.album || item.artist || item.cover ? (
                       <View style={styles.followingActivityMediaRow}>
                         {item.cover ? <Image source={{ uri: item.cover }} style={styles.followingActivityCover} /> : null}
@@ -1206,7 +1266,15 @@ export default function App() {
 
       {screen === "Stores" && !detailStore && (
         <ScrollView contentContainerStyle={styles.page}>
-          <TopBar title="Find Stores" back={() => setScreen("Home")} />
+          <TopBar
+            title="Find Stores"
+            back={() => setScreen("Home")}
+            rightIcon="↻"
+            rightAction={refreshNearbyStores}
+            rightActionLabel="Refresh nearby stores"
+            rightActionDisabled={isLoadingStores}
+            rightActionLoading={isLoadingStores}
+          />
           <Text style={styles.screenSubtitle}>Nearby record stores and music shops</Text>
           {isLoadingStores ? (
             <View style={styles.storeLoadingRow}>
@@ -1256,7 +1324,15 @@ export default function App() {
         </ScrollView>
       )}
 
-      <View style={styles.nav}>
+      <View
+        style={[
+          styles.nav,
+          {
+            height: 56 + Math.max(insets.bottom, 8),
+            paddingBottom: Math.max(insets.bottom, 8),
+          },
+        ]}
+      >
         <NavItem label="Home" active={screen === "Home"} onPress={() => setScreen("Home")} />
         <NavItem label="Library" active={screen === "Collection"} onPress={() => setScreen("Collection")} />
         <NavItem label="Stores" active={screen === "Stores" || screen === "StoreDetail"} onPress={() => {
@@ -1313,47 +1389,72 @@ const styles = StyleSheet.create({
     backgroundColor: "#050509",
   },
   page: {
-    padding: 28,
+    paddingHorizontal: 20,
+    paddingTop: 14,
     paddingBottom: 140,
     backgroundColor: "#050509",
   },
   pageAtmosphereGlow: {
     position: "absolute",
-    top: 12,
-    right: -40,
-    width: 210,
-    height: 210,
-    borderRadius: 105,
-    backgroundColor: "rgba(124, 58, 237, 0.16)",
+    top: -24,
+    right: -50,
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    backgroundColor: "rgba(139, 92, 246, 0.08)",
   },
   logo: {
     color: "#FFF4D6",
-    fontSize: 48,
+    fontSize: 40,
     fontWeight: "900",
-    textAlign: "center",
-    marginTop: 16,
-    letterSpacing: -1.4,
+    textAlign: "left",
+    marginTop: 8,
+    letterSpacing: -1.1,
   },
   tagline: {
     color: "#D1C6E8",
-    fontSize: 17,
-    textAlign: "center",
-    marginTop: 12,
-    marginBottom: 32,
-    lineHeight: 25,
-    fontWeight: "500",
+    fontSize: 13,
+    textAlign: "left",
+    marginTop: 4,
+    marginBottom: 18,
+    lineHeight: 20,
+    fontWeight: "600",
+    letterSpacing: 1.3,
+    textTransform: "uppercase",
+  },
+  homeGreetingWrap: {
+    paddingHorizontal: 2,
+    paddingVertical: 4,
+    marginBottom: 16,
+  },
+  homeGreetingKicker: {
+    color: "#B6AFD8",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  homeGreetingTitle: {
+    color: "#F8EED4",
+    fontSize: 32,
+    fontWeight: "900",
+    marginTop: 2,
+    letterSpacing: 0.1,
+  },
+  homeGreetingSub: {
+    color: "#A7A1BD",
+    fontSize: 13,
+    marginTop: 3,
   },
   hero: {
-    backgroundColor: "rgba(18, 15, 34, 0.92)",
-    borderRadius: 30,
-    padding: 28,
-    marginBottom: 28,
+    backgroundColor: "rgba(13, 14, 20, 0.92)",
+    borderRadius: 22,
+    padding: 18,
+    marginBottom: 18,
     borderWidth: 1,
-    borderColor: "rgba(124, 58, 237, 0.22)",
+    borderColor: "rgba(248, 238, 220, 0.10)",
     shadowColor: "#000",
-    shadowOpacity: 0.22,
-    shadowRadius: 28,
-    elevation: 14,
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 2,
     overflow: "hidden",
   },
   heroGlow: {
@@ -1363,37 +1464,37 @@ const styles = StyleSheet.create({
     width: 170,
     height: 170,
     borderRadius: 85,
-    backgroundColor: "rgba(124, 58, 237, 0.18)",
+    backgroundColor: "rgba(139, 92, 246, 0.10)",
   },
   heroKicker: {
-    color: "#d5b9ff",
-    fontSize: 12,
-    fontWeight: "900",
-    letterSpacing: 1.6,
-    marginBottom: 14,
+    color: "#B8A3EF",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+    marginBottom: 8,
   },
   heroTitle: {
     color: "#fff4d6",
-    fontSize: 31,
+    fontSize: 20,
     fontWeight: "900",
-    lineHeight: 44,
-    marginBottom: 16,
+    lineHeight: 29,
+    marginBottom: 8,
   },
   heroText: {
-    color: "#d6c2a1",
-    fontSize: 15,
-    lineHeight: 24,
+    color: "#B9B2C9",
+    fontSize: 13,
+    lineHeight: 20,
     maxWidth: "96%",
     fontWeight: "500",
   },
   statsRow: {
     flexDirection: "row",
     gap: 10,
-    marginBottom: 24,
+    marginBottom: 16,
   },
   dashboardGrid: {
     gap: 10,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   statCard: {
     flex: 1,
@@ -1422,10 +1523,10 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     color: "#FFF4D6",
-    fontSize: 21,
+    fontSize: 18,
     fontWeight: "900",
-    marginBottom: 14,
-    marginTop: 20,
+    marginBottom: 12,
+    marginTop: 14,
     letterSpacing: 0.2,
   },
   homeCard: {
@@ -1500,7 +1601,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginTop: 12,
+    marginTop: 16,
     marginBottom: 8,
   },
   followingActivitySectionTitle: {
@@ -1508,32 +1609,33 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   followingActivityRefreshButton: {
-    backgroundColor: "rgba(124, 58, 237, 0.26)",
+    backgroundColor: "rgba(255, 255, 255, 0.03)",
     borderWidth: 1,
-    borderColor: "rgba(124, 58, 237, 0.52)",
+    borderColor: "rgba(248, 238, 220, 0.14)",
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 7,
   },
   followingActivityRefreshButtonText: {
-    color: "#E7D8FF",
+    color: "#CFC8DF",
     fontSize: 12,
     fontWeight: "700",
   },
   followingActivityCard: {
-    backgroundColor: "rgba(18, 16, 38, 0.84)",
-    borderRadius: 14,
-    padding: 12,
+    backgroundColor: "transparent",
+    borderRadius: 0,
+    paddingHorizontal: 2,
+    paddingVertical: 12,
     marginBottom: 8,
-    borderWidth: 1,
-    borderColor: "rgba(124, 58, 237, 0.20)",
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(248, 238, 220, 0.10)",
     gap: 8,
   },
   followingActivityCover: {
-    width: 46,
-    height: 46,
+    width: 56,
+    height: 56,
     borderRadius: 8,
-    backgroundColor: "rgba(124, 58, 237, 0.20)",
+    backgroundColor: "rgba(248, 238, 220, 0.08)",
     flexShrink: 0,
   },
   followingActivityTopRow: {
@@ -1563,9 +1665,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   followingActivityEntry: {
-    color: "#D4D1E3",
-    fontSize: 13,
-    lineHeight: 18,
+    color: "#DCD6EA",
+    fontSize: 14,
+    lineHeight: 20,
     marginTop: 2,
   },
   followingActivityMediaRow: {
@@ -1579,12 +1681,12 @@ const styles = StyleSheet.create({
   },
   followingActivityAlbum: {
     color: "#FFF4D6",
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "700",
   },
   followingActivityArtist: {
     color: "#A7A1BD",
-    fontSize: 11,
+    fontSize: 12,
     marginTop: 2,
   },
   followingActivityTime: {
@@ -2432,22 +2534,24 @@ const styles = StyleSheet.create({
   },
   nav: {
     position: "absolute",
-    left: 12,
-    right: 12,
-    bottom: 12,
-    height: 76,
-    backgroundColor: "rgba(16, 15, 28, 0.96)",
-    borderRadius: 22,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 68,
+    backgroundColor: "rgba(8, 9, 13, 0.98)",
+    borderRadius: 0,
     borderWidth: 1,
-    borderColor: "rgba(124, 58, 237, 0.24)",
+    borderColor: "rgba(248, 238, 220, 0.08)",
     flexDirection: "row",
     justifyContent: "space-around",
     alignItems: "center",
     shadowColor: "#000",
-    shadowOpacity: 0.24,
-    shadowRadius: 18,
-    elevation: 14,
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
     paddingHorizontal: 8,
+    paddingTop: 6,
+    paddingBottom: 8,
   },
   navItem: {
     alignItems: "center",
