@@ -68,9 +68,18 @@ export type CollectionAnalytics = {
   newestAlbum: RecordItem | null;
   mostCollectedArtist: { artist: string; count: number } | null;
   favoriteGenre: { genre: string; count: number } | null;
+  favoriteDecade: { decade: string; count: number } | null;
   albumsWithStore: number;
   albumsWithStory: number;
   averageRating: number;
+  highestRatedRecord: RecordItem | null;
+  recordsAddedThisMonth: number;
+  recordsAddedThisYear: number;
+  mostActiveCollectingMonth: { label: string; count: number } | null;
+  mostRecentAddition: RecordItem | null;
+  firstRecordedAddition: RecordItem | null;
+  wishlistAddedThisMonth: number;
+  mostRecentWishlistAddition: RecordItem | null;
   storesVisited: number;
   totalCheckIns: number;
   favoriteStore: { id: string; name: string; count: number } | null;

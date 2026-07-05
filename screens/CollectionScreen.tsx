@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ScrollView,
+  FlatList,
   Text,
   View,
   Pressable,
@@ -11,6 +12,9 @@ import {
   Modal,
   Animated,
   Easing,
+  KeyboardAvoidingView,
+  Platform,
+  Keyboard,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { TopBar } from "../components/TopBar";
@@ -34,7 +38,8 @@ type RecordListScreenProps = {
   onArtistChange: (value: string) => void;
   onSearch: () => void;
   onSelectResult: (result: AlbumSearchResult) => void;
-  onAdd: () => void;
+  onClearSelectedMetadata: () => void;
+  onAdd: () => Promise<boolean>;
   back: () => void;
   onFound?: (record: RecordItem) => void;
   onRemove?: (record: RecordItem) => void;
@@ -72,6 +77,7 @@ export function RecordListScreen({
   onArtistChange,
   onSearch,
   onSelectResult,
+  onClearSelectedMetadata,
   onAdd,
   back,
   onFound,
@@ -97,6 +103,8 @@ export function RecordListScreen({
   const suggestionsAnimation = useRef(new Animated.Value(0)).current;
   const filterSheetAnimation = useRef(new Animated.Value(0)).current;
   const addSheetAnimation = useRef(new Animated.Value(0)).current;
+  const addSearchInputRef = useRef<TextInput | null>(null);
+  const [isSavingAdd, setIsSavingAdd] = useState(false);
 
   const genreOptions = useMemo(() => {
     const values = new Set<string>();
@@ -239,6 +247,114 @@ export function RecordListScreen({
   const floatingButtonBottom = 78 + Math.max(insets.bottom, 10);
   const showOptionalAddFields = !!selectedMetadata;
   const shouldShowSearchControls = album.trim().length > 0 || isSearching || displayedSuggestions.length > 0;
+  const hasSearchQuery = album.trim().length > 0;
+  const showNoResultsState = hasSearchQuery && !isSearching && displayedSuggestions.length === 0 && !!searchMessage && !selectedMetadata;
+
+  function closeAddSheet() {
+    if (isSavingAdd) {
+      return;
+    }
+
+    setIsAddOpen(false);
+  }
+
+  function handleSelectResult(result: AlbumSearchResult) {
+    Keyboard.dismiss();
+    onSelectResult(result);
+  }
+
+  function handleChangeSelection() {
+    onClearSelectedMetadata();
+    setTimeout(() => {
+      addSearchInputRef.current?.focus();
+    }, 50);
+  }
+
+  async function handleAdd() {
+    if (isSavingAdd) {
+      return;
+    }
+
+    setIsSavingAdd(true);
+
+    try {
+      const didAdd = await onAdd();
+      if (didAdd) {
+        Keyboard.dismiss();
+        setIsAddOpen(false);
+      }
+    } finally {
+      setIsSavingAdd(false);
+    }
+  }
+
+  const searchResultsSection = selectedMetadata ? null : (
+    <View style={styles.addSearchResultsSection}>
+      {album.trim().length === 0 ? (
+        <View style={styles.searchPlaceholderState}>
+          <Text style={styles.searchPlaceholderTitle}>Start with a search</Text>
+          <Text style={styles.searchPlaceholderText}>Search for an album title or artist to pull in release details and artwork.</Text>
+        </View>
+      ) : null}
+
+      {isSearching ? (
+        <View style={styles.searchLoadingCard}>
+          <ActivityIndicator color={RecordQuestTheme.colors.accent} size="small" />
+          <Text style={styles.searchLoadingText}>Searching albums…</Text>
+        </View>
+      ) : null}
+
+      {displayedSuggestions.length > 0 ? (
+        <Animated.View
+          style={[
+            styles.resultsListWrap,
+            {
+              opacity: suggestionsOpacity,
+              transform: [{ translateY: suggestionsTranslate }],
+            },
+          ]}
+        >
+          <FlatList
+            data={displayedSuggestions}
+            keyExtractor={(item) => item.id}
+            keyboardShouldPersistTaps="always"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.resultsListContent}
+            renderItem={({ item }) => (
+              <Pressable
+                style={({ pressed }) => [styles.resultCard, pressed ? styles.cardPressed : null]}
+                onPress={() => handleSelectResult(item)}
+              >
+                <Image source={{ uri: item.cover || DEFAULT_COVER }} style={styles.resultCover} />
+                <View style={styles.resultBody}>
+                  <Text style={styles.resultTitle} numberOfLines={2}>
+                    {item.album}
+                  </Text>
+                  <Text style={styles.resultArtist} numberOfLines={1}>
+                    {item.artist}
+                  </Text>
+                  <View style={styles.metaRow}>
+                    {item.year && item.year !== "Unknown" ? <Text style={styles.yearText}>{item.year}</Text> : null}
+                    {item.format ? <Text style={styles.searchFormatPill}>{item.format}</Text> : null}
+                    {item.genre ? <Text style={styles.genrePill}>{item.genre}</Text> : null}
+                  </View>
+                </View>
+              </Pressable>
+            )}
+          />
+        </Animated.View>
+      ) : null}
+
+      {showNoResultsState ? (
+        <View style={styles.searchEmptyStateCard}>
+          <Text style={styles.searchEmptyTitle}>No results found</Text>
+          <Text style={styles.searchEmptyText}>Try an artist name, album title, or a different spelling.</Text>
+        </View>
+      ) : null}
+
+      {!isSearching && !showNoResultsState && searchMessage ? <Text style={styles.panelHintText}>{searchMessage}</Text> : null}
+    </View>
+  );
 
   return (
     <View style={styles.screenContainer}>
@@ -466,203 +582,205 @@ export function RecordListScreen({
         </View>
       </Modal>
 
-      <Modal transparent visible={isAddOpen} animationType="fade" onRequestClose={() => setIsAddOpen(false)}>
+      <Modal transparent visible={isAddOpen} animationType="fade" onRequestClose={closeAddSheet}>
         <View style={styles.sheetBackdrop}>
-          <Pressable style={styles.backdropTapTarget} onPress={() => setIsAddOpen(false)} />
-          <Animated.View style={[styles.addSheetCard, { transform: [{ translateY: addSheetTranslateY }] }]}> 
+          <Pressable style={styles.backdropTapTarget} onPress={closeAddSheet} />
+          <KeyboardAvoidingView
+            style={styles.addSheetKeyboardWrap}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            keyboardVerticalOffset={Math.max(insets.bottom, 8)}
+          >
+            <Animated.View
+              style={[
+                styles.addSheetCard,
+                {
+                  transform: [{ translateY: addSheetTranslateY }],
+                  paddingBottom: 18 + Math.max(insets.bottom, 8),
+                },
+              ]}
+            >
               <View style={styles.addSheetHeaderRow}>
-                <View>
+                <View style={styles.addSheetHeaderTextWrap}>
                   <Text style={styles.sheetTitle}>{isWishlist ? "Add Wishlist Item" : "Add Record"}</Text>
-                  <Text style={styles.sheetSubtitle}>Search MusicBrainz and confirm album details.</Text>
+                  <Text style={styles.sheetSubtitle}>Search for an album or artist to get started.</Text>
                 </View>
-                <Pressable style={styles.sheetClosePill} onPress={() => setIsAddOpen(false)}>
-                  <Text style={styles.sheetClosePillText}>Cancel</Text>
+                <Pressable style={styles.sheetClosePill} onPress={closeAddSheet}>
+                  <Text style={styles.sheetClosePillText}>Close</Text>
                 </Pressable>
               </View>
 
-              <View style={styles.searchRow}>
-                <TextInput
-                  style={[styles.input, styles.albumInput]}
-                  placeholder="Search albums or artists"
-                  placeholderTextColor={RecordQuestTheme.colors.textMuted}
-                  value={album}
-                  onChangeText={onAlbumChange}
-                  returnKeyType="search"
-                  onSubmitEditing={onSearch}
-                />
-                <Pressable
-                  style={[styles.searchButton, { backgroundColor: accentColor, borderColor: accentBorderColor }]}
-                  onPress={onSearch}
-                >
-                  <Text style={styles.searchButtonText}>Search</Text>
-                </Pressable>
-              </View>
-
-              {shouldShowSearchControls ? (
-                <>
-                  <Text style={styles.sheetSectionLabel}>Search Filters</Text>
-                  <View style={styles.optionWrapRow}>
-                    {[
-                      { value: "all", label: "All" },
-                      { value: "album", label: "Album" },
-                      { value: "ep", label: "EP" },
-                      { value: "single", label: "Single" },
-                    ].map((option) => (
-                      <Pressable
-                        key={option.value}
-                        style={[
-                          styles.optionChip,
-                          searchFormatFilter === option.value ? styles.optionChipActive : null,
-                        ]}
-                        onPress={() => setSearchFormatFilter(option.value as SearchFormatFilter)}
-                      >
-                        <Text
-                          style={[
-                            styles.optionChipText,
-                            searchFormatFilter === option.value ? styles.optionChipTextActive : null,
-                          ]}
-                        >
-                          {option.label}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-
-                  <View style={styles.optionWrapRow}>
-                    {[
-                      { value: "relevance", label: "Relevance" },
-                      { value: "year-newest", label: "Year Newest" },
-                      { value: "year-oldest", label: "Year Oldest" },
-                    ].map((option) => (
-                      <Pressable
-                        key={option.value}
-                        style={[
-                          styles.optionChip,
-                          searchResultSort === option.value ? styles.optionChipActive : null,
-                        ]}
-                        onPress={() => setSearchResultSort(option.value as SearchResultSort)}
-                      >
-                        <Text
-                          style={[
-                            styles.optionChipText,
-                            searchResultSort === option.value ? styles.optionChipTextActive : null,
-                          ]}
-                        >
-                          {option.label}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                </>
-              ) : null}
-
-              {album.trim().length === 0 ? (
-                <View style={styles.searchEmptyState}>
-                  <Text style={styles.searchEmptyTitle}>Start your search</Text>
-                  <Text style={styles.searchEmptyText}>Enter album title or artist to fetch real MusicBrainz results.</Text>
-                </View>
-              ) : null}
-
-              {isSearching ? (
-                <View style={styles.searchStatusRow}>
-                  <ActivityIndicator color={RecordQuestTheme.colors.accent} size="small" />
-                  <Text style={styles.searchStatusText}>Searching...</Text>
-                </View>
-              ) : null}
-
-              {!isSearching && searchMessage ? <Text style={styles.panelHintText}>{searchMessage}</Text> : null}
-
-              {displayedSuggestions.length > 0 ? (
-                <Animated.View
-                  style={[
-                    styles.dropdownCard,
-                    {
-                      opacity: suggestionsOpacity,
-                      transform: [{ translateY: suggestionsTranslate }],
-                    },
-                  ]}
-                >
-                  {displayedSuggestions.map((result: AlbumSearchResult) => (
+              <View style={styles.addSearchCard}>
+                <View style={styles.searchInputRow}>
+                  <Text style={styles.searchLeadIcon}>⌕</Text>
+                  <TextInput
+                    ref={addSearchInputRef}
+                    style={styles.addSearchInput}
+                    placeholder="Search albums or artists"
+                    placeholderTextColor={RecordQuestTheme.colors.textMuted}
+                    value={album}
+                    onChangeText={onAlbumChange}
+                    returnKeyType="search"
+                    onSubmitEditing={onSearch}
+                  />
+                  {hasSearchQuery ? (
                     <Pressable
-                      key={result.id}
-                      style={({ pressed }) => [styles.resultCard, pressed ? styles.cardPressed : null]}
-                      onPress={() => onSelectResult(result)}
-                    >
-                      <Image source={{ uri: result.cover || DEFAULT_COVER }} style={styles.resultCover} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.resultTitle} numberOfLines={1}>
-                          {result.album}
-                        </Text>
-                        <Text style={styles.resultArtist} numberOfLines={1}>
-                          {result.artist}
-                        </Text>
-                        <View style={styles.metaRow}>
-                          {result.year && result.year !== "Unknown" ? <Text style={styles.yearText}>{result.year}</Text> : null}
-                          {result.format ? <Text style={styles.searchFormatPill}>{result.format}</Text> : null}
-                          {result.genre ? <Text style={styles.genrePill}>{result.genre}</Text> : null}
-                        </View>
-                      </View>
-                    </Pressable>
-                  ))}
-                </Animated.View>
-              ) : null}
-
-              {selectedMetadata ? (
-                <View style={[styles.selectedCard, { borderColor: accentBorderColor }]}> 
-                  <View style={styles.selectedContentRow}>
-                    <Image
-                      source={{
-                        uri: selectedMetadata.cover || DEFAULT_COVER,
+                      style={styles.searchClearButton}
+                      onPress={() => {
+                        onAlbumChange("");
+                        onClearSelectedMetadata();
                       }}
-                      style={styles.selectedCover}
-                    />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.selectedTitle}>{selectedMetadata.album}</Text>
-                      <Text style={styles.selectedArtist}>{selectedMetadata.artist}</Text>
-                      <View style={styles.metaRow}>
-                        {selectedMetadata.year && selectedMetadata.year !== "Unknown" ? (
-                          <Text style={styles.yearText}>{selectedMetadata.year}</Text>
-                        ) : null}
-                        {selectedMetadata.format ? <Text style={styles.searchFormatPill}>{selectedMetadata.format}</Text> : null}
-                        {selectedMetadata.genre ? <Text style={styles.genrePill}>{selectedMetadata.genre}</Text> : null}
-                      </View>
-                      <Text style={styles.selectedHelperText}>Selected release will be added to your library.</Text>
+                    >
+                      <Text style={styles.searchClearButtonText}>Clear</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+
+                {shouldShowSearchControls && !selectedMetadata ? (
+                  <View style={styles.searchControlsWrap}>
+                    <View style={styles.optionWrapRow}>
+                      {[
+                        { value: "all", label: "All" },
+                        { value: "album", label: "Album" },
+                        { value: "ep", label: "EP" },
+                        { value: "single", label: "Single" },
+                      ].map((option) => (
+                        <Pressable
+                          key={option.value}
+                          style={[
+                            styles.optionChip,
+                            searchFormatFilter === option.value ? styles.optionChipActive : null,
+                          ]}
+                          onPress={() => setSearchFormatFilter(option.value as SearchFormatFilter)}
+                        >
+                          <Text
+                            style={[
+                              styles.optionChipText,
+                              searchFormatFilter === option.value ? styles.optionChipTextActive : null,
+                            ]}
+                          >
+                            {option.label}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+
+                    <View style={styles.optionWrapRow}>
+                      {[
+                        { value: "relevance", label: "Relevance" },
+                        { value: "year-newest", label: "Year Newest" },
+                        { value: "year-oldest", label: "Year Oldest" },
+                      ].map((option) => (
+                        <Pressable
+                          key={option.value}
+                          style={[
+                            styles.optionChip,
+                            searchResultSort === option.value ? styles.optionChipActive : null,
+                          ]}
+                          onPress={() => setSearchResultSort(option.value as SearchResultSort)}
+                        >
+                          <Text
+                            style={[
+                              styles.optionChipText,
+                              searchResultSort === option.value ? styles.optionChipTextActive : null,
+                            ]}
+                          >
+                            {option.label}
+                          </Text>
+                        </Pressable>
+                      ))}
                     </View>
                   </View>
-                </View>
-              ) : null}
+                ) : null}
+              </View>
 
-              {showOptionalAddFields ? (
+              {searchResultsSection}
+
+              {selectedMetadata ? (
                 <>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Artist (optional)"
-                    placeholderTextColor={RecordQuestTheme.colors.textMuted}
-                    value={artist}
-                    onChangeText={onArtistChange}
-                  />
+                  <ScrollView
+                    style={styles.selectedDetailsScroll}
+                    contentContainerStyle={styles.selectedDetailsContent}
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={false}
+                  >
+                    <View style={[styles.selectedCard, { borderColor: accentBorderColor }]}> 
+                      <View style={styles.selectedCardHeader}>
+                        <Text style={styles.selectedCardEyebrow}>Selected album</Text>
+                        <Pressable style={styles.changeSelectionButton} onPress={handleChangeSelection}>
+                          <Text style={styles.changeSelectionButtonText}>Change</Text>
+                        </Pressable>
+                      </View>
+                      <View style={styles.selectedContentRow}>
+                        <Image
+                          source={{
+                            uri: selectedMetadata.cover || DEFAULT_COVER,
+                          }}
+                          style={styles.selectedCover}
+                        />
+                        <View style={styles.selectedInfoWrap}>
+                          <Text style={styles.selectedTitle}>{selectedMetadata.album}</Text>
+                          <Text style={styles.selectedArtist}>{selectedMetadata.artist}</Text>
+                          <View style={styles.metaRow}>
+                            {selectedMetadata.year && selectedMetadata.year !== "Unknown" ? (
+                              <Text style={styles.yearText}>{selectedMetadata.year}</Text>
+                            ) : null}
+                            {selectedMetadata.format ? <Text style={styles.searchFormatPill}>{selectedMetadata.format}</Text> : null}
+                            {selectedMetadata.genre ? <Text style={styles.genrePill}>{selectedMetadata.genre}</Text> : null}
+                          </View>
+                        </View>
+                      </View>
+                    </View>
 
-                  {!isWishlist ? (
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Purchased at (optional)"
-                      placeholderTextColor={RecordQuestTheme.colors.textMuted}
-                      value={purchasedAt}
-                      onChangeText={setPurchasedAt}
-                    />
-                  ) : null}
+                    <View style={styles.optionalSectionCard}>
+                      <Text style={styles.optionalSectionTitle}>Optional details</Text>
+                      <Text style={styles.optionalSectionSubtitle}>Add your own notes before saving this record.</Text>
+
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Artist (optional)"
+                        placeholderTextColor={RecordQuestTheme.colors.textMuted}
+                        value={artist}
+                        onChangeText={onArtistChange}
+                      />
+
+                      {!isWishlist ? (
+                        <TextInput
+                          style={styles.input}
+                          placeholder="Purchased at (optional)"
+                          placeholderTextColor={RecordQuestTheme.colors.textMuted}
+                          value={purchasedAt}
+                          onChangeText={setPurchasedAt}
+                        />
+                      ) : null}
+                    </View>
+
+                    {addFormMessage ? <Text style={styles.addFormMessage}>{addFormMessage}</Text> : null}
+                  </ScrollView>
+
+                  <View style={styles.addActionFooter}>
+                    <Pressable
+                      style={[
+                        styles.addButton,
+                        { backgroundColor: accentColor, borderColor: accentBorderColor },
+                        isSavingAdd ? styles.addButtonDisabled : null,
+                      ]}
+                      onPress={handleAdd}
+                      disabled={isSavingAdd}
+                    >
+                      {isSavingAdd ? (
+                        <View style={styles.addButtonLoadingRow}>
+                          <ActivityIndicator size="small" color={RecordQuestTheme.colors.textPrimary} />
+                          <Text style={styles.addButtonText}>{isWishlist ? "Saving to Wishlist…" : "Adding to Collection…"}</Text>
+                        </View>
+                      ) : (
+                        <Text style={styles.addButtonText}>{isWishlist ? "Add to Wishlist" : "Add to Collection"}</Text>
+                      )}
+                    </Pressable>
+                  </View>
                 </>
               ) : null}
-
-              {addFormMessage ? <Text style={styles.addFormMessage}>{addFormMessage}</Text> : null}
-
-              <Pressable
-                style={[styles.addButton, { backgroundColor: accentColor, borderColor: accentBorderColor }]}
-                onPress={onAdd}
-              >
-                <Text style={styles.addButtonText}>{isWishlist ? "Add to Wishlist" : "Add to Collection"}</Text>
-              </Pressable>
-          </Animated.View>
+            </Animated.View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
     </View>
@@ -682,8 +800,8 @@ const styles = StyleSheet.create({
   },
   screenSubtitle: {
     color: RecordQuestTheme.colors.textSecondary,
-    fontSize: 13,
-    marginBottom: 12,
+    fontSize: 14,
+    marginBottom: 14,
     lineHeight: 20,
   },
   collectionSearchInput: {
@@ -893,8 +1011,8 @@ const styles = StyleSheet.create({
   emptyFeatureCard: {
     borderWidth: 1,
     borderColor: RecordQuestTheme.colors.border,
-    borderRadius: 16,
-    padding: 22,
+    borderRadius: 18,
+    padding: 24,
     alignItems: "center",
     marginTop: 10,
     backgroundColor: RecordQuestTheme.colors.bgCard,
@@ -933,8 +1051,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: RecordQuestTheme.colors.border,
     padding: 18,
-    paddingBottom: 28,
-    maxHeight: "84%",
+    maxHeight: "88%",
+    minHeight: "58%",
+  },
+  addSheetKeyboardWrap: {
+    flex: 1,
+    justifyContent: "flex-end",
   },
   sheetTitle: {
     color: RecordQuestTheme.colors.textPrimary,
@@ -1034,6 +1156,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: 8,
+    marginBottom: 14,
+  },
+  addSheetHeaderTextWrap: {
+    flex: 1,
   },
   sheetClosePill: {
     borderRadius: 999,
@@ -1047,6 +1173,51 @@ const styles = StyleSheet.create({
     color: RecordQuestTheme.colors.textSecondary,
     fontSize: 11,
     fontWeight: "700",
+  },
+  addSearchCard: {
+    backgroundColor: RecordQuestTheme.colors.bgCard,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.08)",
+    padding: 12,
+    marginBottom: 12,
+  },
+  searchInputRow: {
+    minHeight: 54,
+    borderRadius: 14,
+    backgroundColor: RecordQuestTheme.colors.bgElevated,
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.10)",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    gap: 10,
+  },
+  searchLeadIcon: {
+    color: RecordQuestTheme.colors.textMuted,
+    fontSize: 17,
+    fontWeight: "700",
+  },
+  addSearchInput: {
+    flex: 1,
+    color: RecordQuestTheme.colors.textPrimary,
+    fontSize: 16,
+    paddingVertical: 14,
+  },
+  searchClearButton: {
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  searchClearButtonText: {
+    color: RecordQuestTheme.colors.textSecondary,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  searchControlsWrap: {
+    gap: 8,
+    marginTop: 10,
   },
   searchRow: {
     flexDirection: "row",
@@ -1099,6 +1270,52 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
   },
+  addSearchResultsSection: {
+    flex: 1,
+    minHeight: 180,
+  },
+  searchPlaceholderState: {
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.08)",
+    borderRadius: 16,
+    backgroundColor: RecordQuestTheme.colors.bgCard,
+    padding: 16,
+  },
+  searchPlaceholderTitle: {
+    color: RecordQuestTheme.colors.textPrimary,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  searchPlaceholderText: {
+    color: RecordQuestTheme.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 6,
+  },
+  searchLoadingCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: RecordQuestTheme.colors.bgCard,
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.08)",
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  searchLoadingText: {
+    color: RecordQuestTheme.colors.textSecondary,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  resultsListWrap: {
+    flex: 1,
+    minHeight: 160,
+  },
+  resultsListContent: {
+    paddingTop: 4,
+    paddingBottom: 8,
+  },
   searchStatusRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1119,65 +1336,133 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 8,
   },
+  searchEmptyStateCard: {
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.08)",
+    borderRadius: 16,
+    backgroundColor: RecordQuestTheme.colors.bgCard,
+    padding: 16,
+    marginTop: 8,
+  },
   resultCard: {
     flexDirection: "row",
-    backgroundColor: "rgba(15, 17, 24, 0.96)",
+    backgroundColor: "rgba(15, 17, 24, 0.98)",
     borderWidth: 1,
     borderColor: "rgba(248, 238, 220, 0.10)",
-    borderRadius: 12,
-    padding: 11,
+    borderRadius: 16,
+    padding: 12,
     gap: 10,
     marginBottom: 10,
   },
   resultCover: {
-    width: 66,
-    height: 66,
-    borderRadius: 10,
+    width: 78,
+    height: 78,
+    borderRadius: 12,
     backgroundColor: "#26283A",
+  },
+  resultBody: {
+    flex: 1,
+    justifyContent: "center",
   },
   resultTitle: {
     color: RecordQuestTheme.colors.textPrimary,
-    fontSize: 14,
-    fontWeight: "700",
+    fontSize: 16,
+    fontWeight: "800",
+    lineHeight: 21,
   },
   resultArtist: {
     color: RecordQuestTheme.colors.textSecondary,
-    fontSize: 12,
-    marginTop: 3,
+    fontSize: 13,
+    marginTop: 4,
+  },
+  selectedDetailsScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  selectedDetailsContent: {
+    paddingBottom: 12,
   },
   selectedCard: {
     backgroundColor: RecordQuestTheme.colors.bgCard,
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 16,
+    padding: 14,
     marginBottom: 10,
     marginTop: 4,
   },
+  selectedCardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+    gap: 8,
+  },
+  selectedCardEyebrow: {
+    color: RecordQuestTheme.colors.textSecondary,
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  changeSelectionButton: {
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  changeSelectionButtonText: {
+    color: RecordQuestTheme.colors.textPrimary,
+    fontSize: 11,
+    fontWeight: "700",
+  },
   selectedContentRow: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
+    alignItems: "flex-start",
+    gap: 12,
   },
   selectedCover: {
-    width: 72,
-    height: 72,
-    borderRadius: 8,
+    width: 84,
+    height: 84,
+    borderRadius: 12,
     backgroundColor: "#26283A",
+  },
+  selectedInfoWrap: {
+    flex: 1,
   },
   selectedTitle: {
     color: RecordQuestTheme.colors.textPrimary,
-    fontSize: 13,
-    fontWeight: "700",
+    fontSize: 17,
+    fontWeight: "800",
+    lineHeight: 22,
   },
   selectedArtist: {
     color: RecordQuestTheme.colors.textSecondary,
-    fontSize: 12,
-    marginTop: 2,
+    fontSize: 13,
+    marginTop: 4,
   },
   selectedHelperText: {
     color: RecordQuestTheme.colors.textMuted,
     fontSize: 11,
     marginTop: 6,
+  },
+  optionalSectionCard: {
+    backgroundColor: RecordQuestTheme.colors.bgCard,
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.08)",
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
+  },
+  optionalSectionTitle: {
+    color: RecordQuestTheme.colors.textPrimary,
+    fontSize: 14,
+    fontWeight: "800",
+    marginBottom: 4,
+  },
+  optionalSectionSubtitle: {
+    color: RecordQuestTheme.colors.textSecondary,
+    fontSize: 12,
+    marginBottom: 12,
   },
   addFormMessage: {
     color: "#FFD9E8",
@@ -1190,12 +1475,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
   },
+  addActionFooter: {
+    marginTop: 10,
+  },
   addButton: {
     paddingVertical: 13,
-    borderRadius: 12,
+    borderRadius: 16,
     alignItems: "center",
     borderWidth: 1,
     marginTop: 4,
+    minHeight: 54,
+    justifyContent: "center",
+  },
+  addButtonDisabled: {
+    opacity: 0.72,
+  },
+  addButtonLoadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
   addButtonText: {
     color: RecordQuestTheme.colors.textPrimary,

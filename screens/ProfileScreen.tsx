@@ -79,59 +79,69 @@ const FEATURE_TILES: FeatureTile[] = [
 ];
 
 function CollectionAnalyticsDashboard({ analytics }: { analytics: CollectionAnalytics }) {
+  const overviewCards = [
+    { value: analytics.totalArtists, label: "Unique artists", icon: "🎤" },
+    { value: analytics.mostCollectedArtist?.artist ?? null, label: analytics.mostCollectedArtist ? `Top artist (${analytics.mostCollectedArtist.count})` : "Top artist", icon: "💿" },
+    { value: analytics.favoriteGenre?.genre ?? null, label: analytics.favoriteGenre ? `Top genre (${analytics.favoriteGenre.count})` : "Top genre", icon: "🎵" },
+    { value: analytics.favoriteDecade?.decade ?? null, label: analytics.favoriteDecade ? `Favorite decade (${analytics.favoriteDecade.count})` : "Favorite decade", icon: "📼" },
+  ].filter((item) => item.value !== null);
+
+  const collectionCards = [
+    { value: analytics.oldestAlbum?.year ?? null, label: analytics.oldestAlbum ? `Oldest release · ${analytics.oldestAlbum.album}` : "Oldest release", icon: "🏛️" },
+    { value: analytics.newestAlbum?.year ?? null, label: analytics.newestAlbum ? `Newest release · ${analytics.newestAlbum.album}` : "Newest release", icon: "✨" },
+    { value: analytics.averageRating > 0 ? analytics.averageRating : null, label: "Average rating", icon: "⭐" },
+    { value: analytics.highestRatedRecord?.album ?? null, label: analytics.highestRatedRecord?.rating ? `Highest rated · ${analytics.highestRatedRecord.rating}/5` : "Highest rated", icon: "🏆" },
+  ].filter((item) => item.value !== null);
+
+  const activityCards = [
+    { value: analytics.recordsAddedThisYear > 0 ? analytics.recordsAddedThisYear : null, label: "Added this year", icon: "📅" },
+    { value: analytics.recordsAddedThisMonth > 0 ? analytics.recordsAddedThisMonth : null, label: "Added this month", icon: "🗓️" },
+    { value: analytics.mostActiveCollectingMonth?.label ?? null, label: analytics.mostActiveCollectingMonth ? `Most active month (${analytics.mostActiveCollectingMonth.count})` : "Most active month", icon: "🔥" },
+    { value: analytics.mostRecentAddition?.album ?? null, label: analytics.mostRecentAddition?.artist ? `Most recent addition · ${analytics.mostRecentAddition.artist}` : "Most recent addition", icon: "🆕" },
+  ].filter((item) => item.value !== null);
+
   return (
     <View>
-      <Text style={styles.sectionTitle}>Collection Analytics</Text>
+      <Text style={styles.sectionTitle}>Collection Highlights</Text>
 
-      <AnalyticsSectionHeader title="Collection Overview" icon="💿" />
-      <View style={styles.analyticsGrid}>
-        <AnalyticsCard value={analytics.totalArtists} label="Artists" icon="🎤" />
-        <AnalyticsCard value={analytics.totalGenres} label="Genres" icon="🎵" />
-        <AnalyticsCard value={analytics.averageYear || "—"} label="Avg Year" icon="📅" />
-        <AnalyticsCard
-          value={analytics.oldestAlbum?.year || "—"}
-          label="Oldest"
-          icon="🏛️"
-        />
-      </View>
+      {overviewCards.length > 0 ? (
+        <>
+          <AnalyticsSectionHeader title="Overview" icon="💿" />
+          <View style={styles.analyticsGrid}>
+            {overviewCards.map((card) => (
+              <AnalyticsCard key={card.label} value={card.value as string | number} label={card.label} icon={card.icon} />
+            ))}
+          </View>
+        </>
+      ) : null}
 
-      <AnalyticsSectionHeader title="Habits & Metadata" icon="📝" />
-      <View style={styles.analyticsGrid}>
-        <AnalyticsCard
-          value={analytics.mostCollectedArtist?.artist || "—"}
-          label={`Top Artist (${analytics.mostCollectedArtist?.count || 0})`}
-          icon="⭐"
-        />
-        <AnalyticsCard
-          value={analytics.favoriteGenre?.genre || "—"}
-          label={`Favorite (${analytics.favoriteGenre?.count || 0})`}
-          icon="🎶"
-        />
-        <AnalyticsCard value={analytics.albumsWithStory} label="With Stories" icon="📖" />
-        <AnalyticsCard value={analytics.albumsWithStore} label="With Stores" icon="🏪" />
-      </View>
+      {collectionCards.length > 0 ? (
+        <>
+          <AnalyticsSectionHeader title="Collection" icon="📚" />
+          <View style={styles.analyticsGrid}>
+            {collectionCards.map((card) => (
+              <AnalyticsCard key={card.label} value={card.value as string | number} label={card.label} icon={card.icon} />
+            ))}
+          </View>
+        </>
+      ) : null}
 
-      <AnalyticsSectionHeader title="Store Explorer" icon="🗺️" />
-      <View style={styles.analyticsGrid}>
-        <AnalyticsCard value={analytics.storesVisited} label="Stores Visited" icon="📍" />
-        <AnalyticsCard value={analytics.totalCheckIns} label="Total Check-ins" icon="✓" />
-        <AnalyticsCard
-          value={analytics.favoriteStore?.name || "—"}
-          label={`Favorite (${analytics.favoriteStore?.count || 0})`}
-          icon="💫"
-        />
-        <AnalyticsCard value={analytics.averageRating} label="Avg Rating" icon="⭐" />
-      </View>
+      {activityCards.length > 0 ? (
+        <>
+          <AnalyticsSectionHeader title="Activity" icon="⚡" />
+          <View style={styles.analyticsGrid}>
+            {activityCards.map((card) => (
+              <AnalyticsCard key={card.label} value={card.value as string | number} label={card.label} icon={card.icon} />
+            ))}
+          </View>
+        </>
+      ) : null}
 
-      <AnalyticsSectionHeader title="Wishlist Progress" icon="✨" />
-      <View style={styles.analyticsGrid}>
-        <AnalyticsCard value={analytics.wishlistCount} label="Wishlist Items" icon="💜" />
-        <AnalyticsCard
-          value={`${analytics.wishlistCompletionPercent}%`}
-          label="Completion"
-          icon="🎯"
-        />
-      </View>
+      {analytics.averageRating <= 0 ? (
+        <View style={styles.insightHintCard}>
+          <Text style={styles.insightHintText}>Rate a few records to unlock rating insights.</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -547,18 +557,24 @@ export function ProfileScreen({
             ))
           )}
 
-          <Pressable
-            style={styles.insightsToggleButton}
-            onPress={() => setShowInsights((current) => !current)}
-          >
-            <Text style={styles.insightsToggleButtonText}>
-              {showInsights ? "Hide Insights" : "View Insights"}
+          <View style={styles.insightsEntryCard}>
+            <Text style={styles.insightsEntryTitle}>Insights</Text>
+            <Text style={styles.insightsEntryText}>
+              Explore patterns, milestones, and trends across your collection.
             </Text>
-          </Pressable>
+            <Pressable
+              style={styles.insightsToggleButton}
+              onPress={() => setShowInsights((current) => !current)}
+            >
+              <Text style={styles.insightsToggleButtonText}>
+                {showInsights ? "Hide Insights" : "View Insights"}
+              </Text>
+            </Pressable>
+          </View>
 
           {showInsights ? (
             <>
-              <Text style={styles.sectionTitle}>Quest Tracks</Text>
+              <Text style={styles.sectionTitle}>Insights</Text>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -950,6 +966,21 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 24,
   },
+  insightHintCard: {
+    marginTop: -8,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.10)",
+    backgroundColor: "rgba(15, 17, 24, 0.92)",
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  insightHintText: {
+    color: "#BFB8D2",
+    fontSize: 12,
+    lineHeight: 18,
+  },
   achievementCategory: {
     marginBottom: 24,
     borderWidth: 1,
@@ -1008,19 +1039,41 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  insightsEntryCard: {
+    marginTop: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.28)",
+    backgroundColor: "rgba(18, 16, 34, 0.92)",
+    borderRadius: 18,
+    padding: 16,
+  },
+  insightsEntryTitle: {
+    color: "#F8EED4",
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  insightsEntryText: {
+    color: "#CFC7E6",
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 6,
+    marginBottom: 14,
+  },
   insightsToggleButton: {
-    marginTop: 8,
     alignSelf: "flex-start",
     borderWidth: 1,
-    borderColor: "rgba(248, 238, 220, 0.14)",
-    backgroundColor: "rgba(255, 255, 255, 0.03)",
+    borderColor: "rgba(124, 58, 237, 0.52)",
+    backgroundColor: "rgba(124, 58, 237, 0.24)",
     borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    minHeight: 44,
+    justifyContent: "center",
   },
   insightsToggleButtonText: {
-    color: "#CFC7E6",
-    fontSize: 12,
+    color: "#F8EED4",
+    fontSize: 13,
     fontWeight: "700",
   },
   publicRecordCard: {

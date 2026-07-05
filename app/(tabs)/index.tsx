@@ -42,7 +42,6 @@ import { isSupabaseDataModeEnabled } from "../../constants/data-mode";
 import {
   discoverNearbyStores,
   getCuratedFallbackStores,
-  invalidateNearbyStoresCacheForCurrentLocation,
   type StoreDiscoveryResult,
 } from "../../hooks/store-discovery";
 import { getDiscoverUsers, type DiscoverUser } from "../../hooks/discover-users";
@@ -76,7 +75,6 @@ const starterRecords: RecordItem[] = [
 
 const curatedFallbackStores: StoreItem[] = getCuratedFallbackStores();
 
-const STORES_UI_TIMEOUT_MS = 12000;
 const FOLLOWING_FEED_REFRESH_COOLDOWN_MS = 45000;
 const ALBUM_TYPEAHEAD_MIN_CHARS = 2;
 const ALBUM_TYPEAHEAD_DEBOUNCE_MS = 380;
@@ -241,7 +239,6 @@ export default function App() {
       setStoresMessage("Refreshing nearby stores...");
     }
 
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let result: StoreDiscoveryResult = {
       stores: curatedFallbackStores,
       notice: "Showing recommended record stores near you.",
@@ -249,22 +246,9 @@ export default function App() {
     };
 
     try {
-      if (invalidateCacheForCurrentLocation) {
-        await invalidateNearbyStoresCacheForCurrentLocation();
-      }
-
-      result = await Promise.race([
-        discoverNearbyStores(),
-        new Promise<StoreDiscoveryResult>((resolve) => {
-          timeoutId = setTimeout(() => {
-            resolve({
-              stores: curatedFallbackStores,
-              notice: "Showing recommended record stores near you.",
-              usingFallback: true,
-            });
-          }, STORES_UI_TIMEOUT_MS);
-        }),
-      ]);
+      result = await discoverNearbyStores({
+        forceRefresh: invalidateCacheForCurrentLocation,
+      });
     } catch {
       result = {
         stores: curatedFallbackStores,
@@ -272,10 +256,6 @@ export default function App() {
         usingFallback: true,
       };
     } finally {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-
       setStores(result.stores);
       setStoresMessage(result.notice);
       setHasLoadedStores(true);
@@ -627,13 +607,13 @@ export default function App() {
     });
   }
 
-  async function addRecord(toWishlist: boolean) {
+  async function addRecord(toWishlist: boolean): Promise<boolean> {
     const trimmedAlbum = album.trim();
     const trimmedArtist = artist.trim();
     
     if (!trimmedAlbum || !trimmedArtist) {
       setAddFormMessage("Please enter both album name and artist.");
-      return;
+      return false;
     }
 
     if (!toWishlist && hasDuplicateRecord(records, trimmedAlbum, trimmedArtist)) {
@@ -641,13 +621,13 @@ export default function App() {
         ""
       );
       setAddFormMessage("This album is already in your collection.");
-      return;
+      return false;
     }
 
     if (toWishlist && hasDuplicateRecord(wishlist, trimmedAlbum, trimmedArtist)) {
       setSearchMessage("");
       setAddFormMessage("This album is already in your wishlist.");
-      return;
+      return false;
     }
 
     if (toWishlist && hasDuplicateRecord(records, trimmedAlbum, trimmedArtist)) {
@@ -655,7 +635,7 @@ export default function App() {
       setAddFormMessage(
         "This album is already in your collection, so it does not need to be added to your wishlist."
       );
-      return;
+      return false;
     }
 
     const baseItem: RecordItem = {
@@ -700,6 +680,7 @@ export default function App() {
     setSelectedMetadata(null);
     setSearchMessage("");
     setAddFormMessage("");
+    return true;
   }
 
   async function runAlbumSearch(queryAlbum: string, queryArtist: string, manualSearch = false) {
@@ -1145,8 +1126,14 @@ export default function App() {
             setSelectedMetadata(result);
             setSearchResults([]);
             setSearchMessage("");
-            setAddFormMessage(`Selected ${result.album}. Album details prefilled.`);
+            setAddFormMessage("");
             setIsSearching(false);
+          }}
+          onClearSelectedMetadata={() => {
+            setSelectedMetadata(null);
+            setSearchResults([]);
+            setSearchMessage("");
+            setAddFormMessage("");
           }}
           onAdd={() => addRecord(false)}
           onRemove={removeRecord}
@@ -1180,8 +1167,14 @@ export default function App() {
             setSelectedMetadata(result);
             setSearchResults([]);
             setSearchMessage("");
-            setAddFormMessage(`Selected ${result.album}. Album details prefilled.`);
+            setAddFormMessage("");
             setIsSearching(false);
+          }}
+          onClearSelectedMetadata={() => {
+            setSelectedMetadata(null);
+            setSearchResults([]);
+            setSearchMessage("");
+            setAddFormMessage("");
           }}
           onAdd={() => addRecord(true)}
           onFound={markFound}
@@ -1405,10 +1398,10 @@ const styles = StyleSheet.create({
   },
   logo: {
     color: "#FFF4D6",
-    fontSize: 40,
+    fontSize: 36,
     fontWeight: "900",
     textAlign: "left",
-    marginTop: 8,
+    marginTop: 6,
     letterSpacing: -1.1,
   },
   tagline: {
@@ -1416,7 +1409,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: "left",
     marginTop: 4,
-    marginBottom: 18,
+    marginBottom: 16,
     lineHeight: 20,
     fontWeight: "600",
     letterSpacing: 1.3,
@@ -1425,7 +1418,7 @@ const styles = StyleSheet.create({
   homeGreetingWrap: {
     paddingHorizontal: 2,
     paddingVertical: 4,
-    marginBottom: 16,
+    marginBottom: 14,
   },
   homeGreetingKicker: {
     color: "#B6AFD8",
@@ -1434,7 +1427,7 @@ const styles = StyleSheet.create({
   },
   homeGreetingTitle: {
     color: "#F8EED4",
-    fontSize: 32,
+    fontSize: 30,
     fontWeight: "900",
     marginTop: 2,
     letterSpacing: 0.1,
@@ -1446,9 +1439,9 @@ const styles = StyleSheet.create({
   },
   hero: {
     backgroundColor: "rgba(13, 14, 20, 0.92)",
-    borderRadius: 22,
-    padding: 18,
-    marginBottom: 18,
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 20,
     borderWidth: 1,
     borderColor: "rgba(248, 238, 220, 0.10)",
     shadowColor: "#000",
@@ -1477,7 +1470,7 @@ const styles = StyleSheet.create({
     color: "#fff4d6",
     fontSize: 20,
     fontWeight: "900",
-    lineHeight: 29,
+    lineHeight: 27,
     marginBottom: 8,
   },
   heroText: {
@@ -1490,7 +1483,7 @@ const styles = StyleSheet.create({
   statsRow: {
     flexDirection: "row",
     gap: 10,
-    marginBottom: 16,
+    marginBottom: 20,
   },
   dashboardGrid: {
     gap: 10,
@@ -1525,8 +1518,8 @@ const styles = StyleSheet.create({
     color: "#FFF4D6",
     fontSize: 18,
     fontWeight: "900",
-    marginBottom: 12,
-    marginTop: 14,
+    marginBottom: 10,
+    marginTop: 16,
     letterSpacing: 0.2,
   },
   homeCard: {
@@ -1563,12 +1556,12 @@ const styles = StyleSheet.create({
     fontWeight: "300",
   },
   activityFeedStateCard: {
-    backgroundColor: "rgba(18, 16, 38, 0.86)",
-    borderRadius: 14,
-    padding: 14,
+    backgroundColor: "rgba(16, 18, 25, 0.92)",
+    borderRadius: 18,
+    padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "rgba(124, 58, 237, 0.20)",
+    borderColor: "rgba(248, 238, 220, 0.10)",
     alignItems: "flex-start",
     gap: 8,
   },
@@ -1723,10 +1716,10 @@ const styles = StyleSheet.create({
   },
   screenSubtitle: {
     color: "#C4BEE0",
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "600",
-    marginBottom: 22,
-    lineHeight: 23,
+    marginBottom: 18,
+    lineHeight: 21,
   },
   addPanel: {
     backgroundColor: "rgba(20, 18, 38, 0.96)",
@@ -2036,7 +2029,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginBottom: 8,
+    marginBottom: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 18,
+    backgroundColor: "rgba(16, 18, 25, 0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.10)",
   },
   storeStatusText: {
     color: "#C7C7D1",
@@ -2073,21 +2072,21 @@ const styles = StyleSheet.create({
   },
   storeButtonsRow: {
     flexDirection: "row",
-    gap: 12,
+    gap: 10,
   },
   storeButton: {
     flex: 1,
     backgroundColor: "#26204a",
-    borderRadius: 28,
-    paddingVertical: 15,
+    borderRadius: 16,
+    paddingVertical: 13,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "#3d3378",
+    borderColor: "rgba(248, 238, 220, 0.12)",
   },
   viewStoreButton: {
-    backgroundColor: "#2f2558",
-    borderColor: "#4f3ea8",
+    backgroundColor: "#211C3A",
+    borderColor: "rgba(248, 238, 220, 0.12)",
   },
   checkInButton: {
     backgroundColor: "#7c3aed",

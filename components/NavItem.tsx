@@ -58,19 +58,20 @@ const styles = StyleSheet.create({
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
-    gap: 3,
-    paddingVertical: 6,
+    gap: 4,
+    paddingVertical: 7,
     paddingHorizontal: 4,
-    borderRadius: 10,
+    borderRadius: 12,
     minWidth: 0,
+    minHeight: 44,
   },
   navItemPressed: {
     opacity: 0.82,
   },
   navIcon: {
     color: "#605B70",
-    fontSize: 14,
-    lineHeight: 16,
+    fontSize: 15,
+    lineHeight: 17,
     fontWeight: "600",
   },
   navIconActive: {
@@ -78,9 +79,9 @@ const styles = StyleSheet.create({
   },
   navText: {
     color: RecordQuestTheme.colors.textMuted,
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: "600",
-    lineHeight: 12,
+    lineHeight: 13,
     textAlign: "center",
   },
   navTextActive: {
