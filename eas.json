@@ -1,0 +1,12 @@
+{
+  "cli": {
+    "version": ">= 16.13.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "production": {
+      "distribution": "store",
+      "autoIncrement": "buildNumber"
+    }
+  }
+}

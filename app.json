@@ -9,7 +9,9 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.arieshalita.recordquest",
+      "buildNumber": "1"
     },
     "android": {
       "adaptiveIcon": {
@@ -35,7 +37,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Allow RecordQuest to use your location to find nearby record stores."
+          "locationWhenInUsePermission": "RecordQuest uses your location to find nearby record stores and support store check-ins."
         }
       ],
       [
