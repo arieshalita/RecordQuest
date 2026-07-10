@@ -32,6 +32,7 @@ import {
   type Session,
   type User,
 } from "@supabase/supabase-js";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // Read environment variables with Expo public prefix
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -52,7 +53,15 @@ if (!supabaseUrl || !supabaseAnonKey) {
  */
 export const supabase: SupabaseClient = createClient(
   supabaseUrl,
-  supabaseAnonKey
+  supabaseAnonKey,
+  {
+    auth: {
+      storage: AsyncStorage,
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: false,
+    },
+  }
 );
 
 /**
@@ -174,7 +183,7 @@ export async function signInWithEmail(
  */
 export async function signOut(): Promise<AuthResponse> {
   try {
-    const { error } = await supabase.auth.signOut();
+    const { error } = await supabase.auth.signOut({ scope: "local" });
 
     if (error) {
       return { success: false, error: error.message };
@@ -236,12 +245,12 @@ export async function getCurrentSession(): Promise<Session | null> {
  * @returns Unsubscribe function to stop listening
  */
 export function onAuthStateChange(
-  callback: (authenticated: boolean, user: User | null) => void
+  callback: (authenticated: boolean, user: User | null, session: Session | null) => void
 ): () => void {
   const {
     data: { subscription },
   } = supabase.auth.onAuthStateChange((_event, session) => {
-    callback(!!session, session?.user ?? null);
+    callback(!!session, session?.user ?? null, session ?? null);
   });
 
   return () => {

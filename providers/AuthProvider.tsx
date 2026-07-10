@@ -7,6 +7,7 @@ import {
   type PropsWithChildren,
 } from "react";
 import { router } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { Session, User } from "@supabase/supabase-js";
 import {
   getCurrentSession,
@@ -21,12 +22,44 @@ interface AuthContextValue {
   user: User | null;
   session: Session | null;
   isLoading: boolean;
-  signIn: (email: string, password: string) => Promise<AuthResponse>;
+  signIn: (email: string, password: string, staySignedIn: boolean) => Promise<AuthResponse>;
   signUp: (email: string, password: string) => Promise<AuthResponse>;
   signOut: () => Promise<AuthResponse>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+const STAY_SIGNED_IN_KEY = "recordquest_stay_signed_in";
+
+async function getStaySignedInPreference(): Promise<boolean> {
+  try {
+    const stored = await AsyncStorage.getItem(STAY_SIGNED_IN_KEY);
+
+    if (stored === null) {
+      return true;
+    }
+
+    return stored === "true";
+  } catch (error) {
+    console.warn("[RecordQuest][auth] could not read stay-signed-in preference:", error);
+    return true;
+  }
+}
+
+async function setStaySignedInPreference(value: boolean): Promise<void> {
+  try {
+    await AsyncStorage.setItem(STAY_SIGNED_IN_KEY, value ? "true" : "false");
+  } catch (error) {
+    console.warn("[RecordQuest][auth] could not save stay-signed-in preference:", error);
+  }
+}
+
+async function resetStaySignedInPreference(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(STAY_SIGNED_IN_KEY);
+  } catch (error) {
+    console.warn("[RecordQuest][auth] could not reset stay-signed-in preference:", error);
+  }
+}
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [user, setUser] = useState<User | null>(null);
@@ -37,7 +70,21 @@ export function AuthProvider({ children }: PropsWithChildren) {
     let isMounted = true;
 
     async function restoreSession() {
-      const activeSession = await getCurrentSession();
+      const staySignedIn = await getStaySignedInPreference();
+      let activeSession = await getCurrentSession();
+
+      if (!staySignedIn && activeSession) {
+        const signOutResult = await supabaseSignOut();
+
+        if (!signOutResult.success) {
+          console.warn(
+            "[RecordQuest][auth] failed to clear persisted session on cold launch:",
+            signOutResult.error ?? "unknown error"
+          );
+        }
+
+        activeSession = null;
+      }
 
       if (!isMounted) {
         return;
@@ -50,8 +97,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     restoreSession();
 
-    const unsubscribe = onAuthStateChange((authenticated, authUser) => {
+    const unsubscribe = onAuthStateChange((authenticated, authUser, authSession) => {
       setUser(authenticated ? authUser : null);
+      setSession(authenticated ? authSession : null);
 
       if (!authenticated) {
         setSession(null);
@@ -69,7 +117,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       user,
       session,
       isLoading,
-      signIn: async (email: string, password: string) => {
+      signIn: async (email: string, password: string, staySignedIn: boolean) => {
         const result = await signInWithEmail(email, password);
 
         if (!result.success) {
@@ -77,6 +125,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         }
 
         if (result.success) {
+          await setStaySignedInPreference(staySignedIn);
           setSession(result.session ?? null);
           setUser(result.user ?? null);
         }
@@ -105,6 +154,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         }
 
         if (result.success) {
+          await resetStaySignedInPreference();
           setSession(null);
           setUser(null);
           router.replace("/(auth)/sign-in");

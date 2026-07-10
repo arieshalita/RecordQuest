@@ -15,6 +15,7 @@ export default function SignInScreen() {
   const { signIn } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [staySignedIn, setStaySignedIn] = useState(true);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -27,7 +28,7 @@ export default function SignInScreen() {
     }
 
     setIsSubmitting(true);
-    const result = await signIn(email, password);
+    const result = await signIn(email, password, staySignedIn);
     setIsSubmitting(false);
 
     if (!result.success) {
@@ -75,6 +76,19 @@ export default function SignInScreen() {
         />
       </View>
 
+      <Pressable
+        style={styles.staySignedInRow}
+        onPress={() => setStaySignedIn((current) => !current)}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: staySignedIn }}
+        accessibilityLabel="Stay signed in"
+      >
+        <View style={[styles.checkbox, staySignedIn ? styles.checkboxChecked : null]}>
+          {staySignedIn ? <Text style={styles.checkboxCheck}>✓</Text> : null}
+        </View>
+        <Text style={styles.staySignedInText}>Stay signed in</Text>
+      </Pressable>
+
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
       <Pressable
@@ -115,6 +129,43 @@ const styles = StyleSheet.create({
     fontSize: 16,
     paddingHorizontal: 14,
     paddingVertical: 12,
+  },
+  staySignedInRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#13111F",
+    borderWidth: 1,
+    borderColor: "#3E3B5C",
+    borderRadius: 16,
+    minHeight: 48,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#6B6788",
+    backgroundColor: "#0E0D16",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkboxChecked: {
+    borderColor: "#7C3AED",
+    backgroundColor: "#7C3AED",
+  },
+  checkboxCheck: {
+    color: "#FFF4D6",
+    fontSize: 14,
+    fontWeight: "800",
+    lineHeight: 16,
+  },
+  staySignedInText: {
+    color: "#FFF4D6",
+    fontSize: 15,
+    fontWeight: "600",
   },
   errorText: {
     color: "#F59E0B",
