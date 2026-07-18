@@ -14,6 +14,17 @@ type CallbackState = {
 
 const OTP_TYPES: EmailOtpType[] = ["signup", "invite", "recovery", "email", "email_change"];
 
+const consumedCallbackKeys = new Set<string>();
+let initialUrlPromise: Promise<string | null> | null = null;
+
+function getInitialUrlOnce(): Promise<string | null> {
+  if (!initialUrlPromise) {
+    initialUrlPromise = Linking.getInitialURL().catch(() => null);
+  }
+
+  return initialUrlPromise;
+}
+
 function parseParams(raw: string): URLSearchParams {
   return new URLSearchParams(raw.startsWith("?") || raw.startsWith("#") ? raw.slice(1) : raw);
 }
@@ -49,10 +60,53 @@ function mapType(rawType: string | null): EmailOtpType | null {
   return null;
 }
 
+function buildCallbackKey(url: string, queryParams: URLSearchParams, hashParams: URLSearchParams): string {
+  const tokenHash = queryParams.get("token_hash") ?? hashParams.get("token_hash") ?? "";
+  const accessToken = hashParams.get("access_token") ?? queryParams.get("access_token") ?? "";
+  const refreshToken = hashParams.get("refresh_token") ?? queryParams.get("refresh_token") ?? "";
+  const type = queryParams.get("type") ?? hashParams.get("type") ?? "";
+
+  if (tokenHash) {
+    return `token_hash:${type}:${tokenHash}`;
+  }
+
+  if (accessToken || refreshToken) {
+    return `session_tokens:${type}:${accessToken.length}:${refreshToken.length}`;
+  }
+
+  return `url:${url}`;
+}
+
+function hasAuthPayload(queryParams: URLSearchParams, hashParams: URLSearchParams): boolean {
+  return Boolean(
+    queryParams.get("token_hash") ||
+      hashParams.get("token_hash") ||
+      hashParams.get("access_token") ||
+      queryParams.get("access_token") ||
+      hashParams.get("refresh_token") ||
+      queryParams.get("refresh_token") ||
+      queryParams.get("error") ||
+      queryParams.get("error_description")
+  );
+}
+
+function logCallback(message: string, details?: Record<string, unknown>): void {
+  if (!__DEV__) {
+    return;
+  }
+
+  if (details) {
+    console.log(`[RecordQuest][auth-callback] ${message}`, details);
+    return;
+  }
+
+  console.log(`[RecordQuest][auth-callback] ${message}`);
+}
+
 export default function AuthCallbackScreen() {
   const params = useLocalSearchParams();
   const liveUrl = Linking.useURL();
-  const isProcessingRef = useRef(false);
+  const hasStartedRef = useRef(false);
   const [state, setState] = useState<CallbackState>({
     status: "loading",
     title: "Verifying Link",
@@ -73,20 +127,47 @@ export default function AuthCallbackScreen() {
   }, [params]);
 
   useEffect(() => {
-    if (isProcessingRef.current) {
+    if (hasStartedRef.current) {
       return;
     }
 
-    isProcessingRef.current = true;
+    hasStartedRef.current = true;
     let isMounted = true;
 
+    function replaceAway(nextHref: "/(auth)/sign-in" | "/(tabs)", reason: string) {
+      logCallback("route replaced", { nextHref, reason });
+      router.replace(nextHref);
+    }
+
     async function run() {
+      logCallback("callback processing started");
+
       try {
-        const initialUrl = liveUrl ?? (await Linking.getInitialURL()) ?? "";
+        const initialUrl = liveUrl ?? (await getInitialUrlOnce()) ?? "";
 
         const parsed = initialUrl ? new URL(initialUrl) : null;
         const queryParams = parsed ? parseParams(parsed.search) : fallbackQuery;
         const hashParams = parsed ? parseParams(parsed.hash) : new URLSearchParams();
+        const callbackKey = buildCallbackKey(initialUrl || "no-url", queryParams, hashParams);
+
+        logCallback("URL processed", {
+          hasUrl: Boolean(initialUrl),
+          hasAuthPayload: hasAuthPayload(queryParams, hashParams),
+        });
+
+        if (consumedCallbackKeys.has(callbackKey)) {
+          logCallback("callback already consumed", {
+            hasAuthPayload: hasAuthPayload(queryParams, hashParams),
+          });
+
+          const {
+            data: { session: existingSession },
+          } = await supabase.auth.getSession();
+
+          if (!isMounted) return;
+          replaceAway(existingSession?.user ? "/(tabs)" : "/(auth)/sign-in", "consumed-link");
+          return;
+        }
 
         const accessToken = hashParams.get("access_token") ?? queryParams.get("access_token");
         const refreshToken = hashParams.get("refresh_token") ?? queryParams.get("refresh_token");
@@ -95,7 +176,21 @@ export default function AuthCallbackScreen() {
         const authType = mapType(rawType);
         const queryError = queryParams.get("error_description") ?? queryParams.get("error");
 
+        if (!hasAuthPayload(queryParams, hashParams)) {
+          consumedCallbackKeys.add(callbackKey);
+
+          const {
+            data: { session: existingSession },
+          } = await supabase.auth.getSession();
+
+          if (!isMounted) return;
+          replaceAway(existingSession?.user ? "/(tabs)" : "/(auth)/sign-in", "no-auth-payload");
+          return;
+        }
+
         if (queryError) {
+          consumedCallbackKeys.add(callbackKey);
+
           if (!isMounted) return;
           setState({
             status: "error",
@@ -115,6 +210,8 @@ export default function AuthCallbackScreen() {
           });
 
           if (setSessionError) {
+            consumedCallbackKeys.add(callbackKey);
+
             if (!isMounted) return;
             setState({
               status: "error",
@@ -131,6 +228,8 @@ export default function AuthCallbackScreen() {
           });
 
           if (verifyError) {
+            consumedCallbackKeys.add(callbackKey);
+
             if (!isMounted) return;
             setState({
               status: "error",
@@ -141,6 +240,8 @@ export default function AuthCallbackScreen() {
             return;
           }
         } else {
+          consumedCallbackKeys.add(callbackKey);
+
           if (!isMounted) return;
           setState({
             status: "error",
@@ -154,6 +255,8 @@ export default function AuthCallbackScreen() {
         const {
           data: { session },
         } = await supabase.auth.getSession();
+
+        consumedCallbackKeys.add(callbackKey);
 
         const wasRecoveryFlow = authType === "recovery" || rawType?.toLowerCase() === "recovery";
         const nextHref = session?.user && !wasRecoveryFlow ? "/(tabs)" : "/(auth)/sign-in";
@@ -172,7 +275,7 @@ export default function AuthCallbackScreen() {
 
         setTimeout(() => {
           if (isMounted) {
-            router.replace(nextHref);
+            replaceAway(nextHref, "callback-success");
           }
         }, 900);
       } catch (error) {
@@ -191,7 +294,7 @@ export default function AuthCallbackScreen() {
     return () => {
       isMounted = false;
     };
-  }, [fallbackQuery, liveUrl]);
+  }, []);
 
   const buttonLabel = state.status === "success" && state.nextHref === "/(tabs)"
     ? "Open RecordQuest"
@@ -204,7 +307,16 @@ export default function AuthCallbackScreen() {
         <Text style={styles.title}>{state.title}</Text>
         <Text style={styles.message}>{state.message}</Text>
         {state.status !== "loading" ? (
-          <Pressable style={styles.button} onPress={() => router.replace(state.nextHref)}>
+          <Pressable
+            style={styles.button}
+            onPress={() => {
+              logCallback("route replaced", {
+                nextHref: state.nextHref,
+                reason: "manual-action",
+              });
+              router.replace(state.nextHref);
+            }}
+          >
             <Text style={styles.buttonText}>{buttonLabel}</Text>
           </Pressable>
         ) : null}
