@@ -10,6 +10,7 @@ import {
 import { router } from "expo-router";
 import { AuthScreenShell } from "../../components/auth/AuthScreenShell";
 import { supabase } from "../../hooks/supabase-client";
+import { isValidEmail, mapPasswordResetErrorMessage, normalizeEmail } from "../../utils/auth-input";
 
 export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState("");
@@ -21,19 +22,28 @@ export default function ForgotPasswordScreen() {
     setError("");
     setMessage("");
 
-    if (!email.trim()) {
+    const normalizedEmail = normalizeEmail(email);
+
+    if (!normalizedEmail) {
       setError("Enter your account email.");
       return;
     }
 
+    if (!isValidEmail(normalizedEmail)) {
+      setError("Enter a valid email address.");
+      return;
+    }
+
+    setEmail(normalizedEmail);
+
     setIsSubmitting(true);
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(
-      email.trim()
+      normalizedEmail
     );
     setIsSubmitting(false);
 
     if (resetError) {
-      setError(resetError.message);
+      setError(mapPasswordResetErrorMessage(resetError.message));
       return;
     }
 

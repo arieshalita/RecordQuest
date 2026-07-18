@@ -10,6 +10,7 @@ import {
 import { router } from "expo-router";
 import { AuthScreenShell } from "../../components/auth/AuthScreenShell";
 import { useAuth } from "../../providers/AuthProvider";
+import { isValidEmail, mapSignInErrorMessage, normalizeEmail } from "../../utils/auth-input";
 
 export default function SignInScreen() {
   const { signIn } = useAuth();
@@ -22,17 +23,27 @@ export default function SignInScreen() {
   async function handleSignIn() {
     setError("");
 
-    if (!email.trim() || !password.trim()) {
+    const normalizedEmail = normalizeEmail(email);
+    const trimmedPassword = password.trim();
+
+    if (!normalizedEmail || !trimmedPassword) {
       setError("Enter your email and password.");
       return;
     }
 
+    if (!isValidEmail(normalizedEmail)) {
+      setError("Enter a valid email address.");
+      return;
+    }
+
+    setEmail(normalizedEmail);
+
     setIsSubmitting(true);
-    const result = await signIn(email, password, staySignedIn);
+    const result = await signIn(normalizedEmail, trimmedPassword, staySignedIn);
     setIsSubmitting(false);
 
     if (!result.success) {
-      setError(result.error ?? "Could not sign in.");
+      setError(mapSignInErrorMessage(result.error));
       return;
     }
 

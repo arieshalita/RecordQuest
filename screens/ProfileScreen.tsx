@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ScrollView, Text, View, StyleSheet, Pressable, TextInput, Image, Modal } from "react-native";
 import { TopBar } from "../components/TopBar";
 import { StatCard } from "../components/StatCard";
@@ -20,7 +20,12 @@ import {
   sanitizeUsername,
   saveOwnProfileIdentity,
 } from "../hooks/profile-identity";
-import { loadPublicCollectionPreview, type PublicRecordPreview } from "../hooks/public-collection-preview";
+import {
+  loadPublicCollectionCount,
+  loadPublicCollectionPreview,
+  type PublicRecordPreview,
+} from "../hooks/public-collection-preview";
+import { getFallbackAlbumArtUrl, resolveAlbumArtUrl } from "../utils/album-art";
 
 type ProfileScreenProps = {
   records: RecordItem[];
@@ -33,6 +38,8 @@ type ProfileScreenProps = {
   profileUserId?: string;
   profileDisplayName?: string;
   onOpenDiscoverUsers?: () => void;
+  onOpenSocialConnections?: (mode: "followers" | "following", userId: string, displayName: string) => void;
+  onOpenProfileRecords?: (userId: string, displayName: string) => void;
 };
 
 type FeatureTile = {
@@ -157,8 +164,10 @@ export function ProfileScreen({
   profileUserId,
   profileDisplayName,
   onOpenDiscoverUsers,
+  onOpenSocialConnections,
+  onOpenProfileRecords,
 }: ProfileScreenProps) {
-  const { signOut, user } = useAuth();
+  const { signOut, user, isLoading: isAuthLoading } = useAuth();
   const currentUserId = user?.id ?? null;
   const targetUserId = profileUserId ?? currentUserId;
   const isOwnProfile = useMemo(
@@ -174,18 +183,25 @@ export function ProfileScreen({
   const [followError, setFollowError] = useState<string | null>(null);
   const [profileUsername, setProfileUsername] = useState("");
   const [profileDisplayNameState, setProfileDisplayNameState] = useState("");
+  const [profileBio, setProfileBio] = useState("");
   const [isProfileIdentityLoading, setIsProfileIdentityLoading] = useState(false);
   const [isEditingIdentity, setIsEditingIdentity] = useState(false);
   const [displayNameDraft, setDisplayNameDraft] = useState("");
   const [usernameDraft, setUsernameDraft] = useState("");
+  const [bioDraft, setBioDraft] = useState("");
   const [isSavingIdentity, setIsSavingIdentity] = useState(false);
   const [identityError, setIdentityError] = useState<string | null>(null);
   const [identitySuccess, setIdentitySuccess] = useState<string | null>(null);
   const [publicCollectionRecords, setPublicCollectionRecords] = useState<PublicRecordPreview[]>([]);
   const [isPublicCollectionLoading, setIsPublicCollectionLoading] = useState(false);
   const [publicCollectionError, setPublicCollectionError] = useState<string | null>(null);
+  const [publicCollectionCount, setPublicCollectionCount] = useState(0);
+  const [brokenPublicRecordCoverIds, setBrokenPublicRecordCoverIds] = useState<Set<number>>(new Set());
+  const [selectedPublicRecord, setSelectedPublicRecord] = useState<PublicRecordPreview | null>(null);
+  const [selectedPublicRecordCoverBroken, setSelectedPublicRecordCoverBroken] = useState(false);
   const [selectedFeatureTile, setSelectedFeatureTile] = useState<FeatureTile | null>(null);
   const [showInsights, setShowInsights] = useState(false);
+  const saveIdentityInFlightRef = useRef(false);
 
   const analytics = calculateCollectionAnalytics(records, wishlist, storeCheckIns, activity);
   const allBadges = useMemo(
@@ -206,6 +222,28 @@ export function ProfileScreen({
   const resolvedProfileName =
     profileDisplayNameState ||
     (isOwnProfile ? "Arie" : profileDisplayName ?? "Collector");
+
+  const profileInitial = useMemo(() => {
+    const source = resolvedProfileName || profileUsername || "R";
+    return source.trim().charAt(0).toUpperCase() || "R";
+  }, [profileUsername, resolvedProfileName]);
+
+  function formatAddedAtLabel(value?: string): string {
+    if (!value) {
+      return "Added date unavailable";
+    }
+
+    const timestamp = Date.parse(value);
+    if (Number.isNaN(timestamp)) {
+      return "Added date unavailable";
+    }
+
+    return `Added ${new Date(timestamp).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    })}`;
+  }
 
   function getFeatureStatus(tile: FeatureTile): {
     label: "Unlocked" | "In Progress" | "Locked";
@@ -299,10 +337,12 @@ export function ProfileScreen({
 
       setProfileDisplayNameState(profile?.displayName ?? fallbackName);
       setProfileUsername(profile?.username ?? "");
+      setProfileBio(profile?.bio ?? "");
 
       if (isOwnProfile) {
         setDisplayNameDraft(profile?.displayName ?? fallbackName);
         setUsernameDraft(profile?.username ?? "");
+        setBioDraft(profile?.bio ?? "");
       }
     } finally {
       setIsProfileIdentityLoading(false);
@@ -316,6 +356,7 @@ export function ProfileScreen({
   useEffect(() => {
     if (isOwnProfile || !targetUserId) {
       setPublicCollectionRecords([]);
+      setPublicCollectionCount(0);
       setIsPublicCollectionLoading(false);
       setPublicCollectionError(null);
       return;
@@ -330,11 +371,14 @@ export function ProfileScreen({
       setPublicCollectionError(null);
 
       const result = await loadPublicCollectionPreview(viewedUserId, 8);
+      const countResult = await loadPublicCollectionCount(viewedUserId);
 
       if (!isMounted) return;
 
       setPublicCollectionRecords(result.records);
-      setPublicCollectionError(result.error ?? null);
+      setPublicCollectionCount(countResult.count);
+      setBrokenPublicRecordCoverIds(new Set());
+      setPublicCollectionError(result.error ?? countResult.error ?? null);
       setIsPublicCollectionLoading(false);
     }
 
@@ -344,6 +388,16 @@ export function ProfileScreen({
       isMounted = false;
     };
   }, [isOwnProfile, targetUserId]);
+
+  useEffect(() => {
+    if (isOwnProfile) {
+      setSelectedPublicRecord(null);
+    }
+  }, [isOwnProfile]);
+
+  useEffect(() => {
+    setSelectedPublicRecordCoverBroken(false);
+  }, [selectedPublicRecord?.id]);
 
   async function onToggleFollow() {
     if (!targetUserId || isOwnProfile || isFollowActionLoading) {
@@ -374,29 +428,47 @@ export function ProfileScreen({
   }
 
   async function onSaveIdentity() {
-    if (!currentUserId || !isOwnProfile || isSavingIdentity) {
+    if (!currentUserId || !isOwnProfile || isSavingIdentity || saveIdentityInFlightRef.current) {
       return;
     }
 
+    if (isAuthLoading) {
+      setIdentityError("Please wait for authentication to finish loading.");
+      return;
+    }
+
+    saveIdentityInFlightRef.current = true;
     setIsSavingIdentity(true);
     setIdentityError(null);
     setIdentitySuccess(null);
 
     try {
-      const result = await saveOwnProfileIdentity(currentUserId, displayNameDraft, usernameDraft);
+      const result = await saveOwnProfileIdentity(
+        currentUserId,
+        displayNameDraft,
+        usernameDraft,
+        bioDraft
+      );
 
       if (!result.success) {
         setIdentityError(result.error ?? "Could not update your profile.");
         return;
       }
 
-      setProfileDisplayNameState(result.profile?.displayName ?? displayNameDraft.trim());
-      setProfileUsername(result.profile?.username ?? sanitizeUsername(usernameDraft));
-      setDisplayNameDraft(result.profile?.displayName ?? displayNameDraft.trim());
-      setUsernameDraft(result.profile?.username ?? sanitizeUsername(usernameDraft));
+      const resolvedDisplayName = result.profile?.displayName ?? displayNameDraft.trim();
+      const resolvedUsername = result.profile?.username ?? sanitizeUsername(usernameDraft);
+      const resolvedBio = result.profile?.bio ?? bioDraft.trim();
+
+      setProfileDisplayNameState(resolvedDisplayName);
+      setProfileUsername(resolvedUsername);
+      setProfileBio(resolvedBio);
+      setDisplayNameDraft(resolvedDisplayName);
+      setUsernameDraft(resolvedUsername);
+      setBioDraft(resolvedBio);
       setIdentitySuccess("Profile updated.");
       setIsEditingIdentity(false);
     } finally {
+      saveIdentityInFlightRef.current = false;
       setIsSavingIdentity(false);
     }
   }
@@ -408,7 +480,7 @@ export function ProfileScreen({
 
       <View style={styles.profileCard}>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>A</Text>
+          <Text style={styles.avatarText}>{profileInitial}</Text>
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.profileName}>{resolvedProfileName}</Text>
@@ -419,14 +491,40 @@ export function ProfileScreen({
                 ? `@${profileUsername}`
                 : "Vinyl collector"}
           </Text>
-          <Text style={styles.profileBio}>Building the ultimate crate-digging log.</Text>
+          <Text style={styles.profileBio}>
+            {profileBio || "Building the ultimate crate-digging log."}
+          </Text>
           <View style={styles.followMetaRow}>
-            <Text style={styles.followMetaText}>
-              {isFollowMetaLoading ? "Followers ..." : `Followers ${followerCount}`}
-            </Text>
-            <Text style={styles.followMetaText}>
-              {isFollowMetaLoading ? "Following ..." : `Following ${followingCount}`}
-            </Text>
+            <Pressable
+              style={styles.followMetaButton}
+              onPress={() => {
+                if (!onOpenSocialConnections || !targetUserId) {
+                  return;
+                }
+
+                onOpenSocialConnections("followers", targetUserId, resolvedProfileName);
+              }}
+              disabled={!onOpenSocialConnections || !targetUserId || isFollowMetaLoading}
+            >
+              <Text style={styles.followMetaText}>
+                {isFollowMetaLoading ? "... Followers" : `${followerCount} Followers`}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.followMetaButton}
+              onPress={() => {
+                if (!onOpenSocialConnections || !targetUserId) {
+                  return;
+                }
+
+                onOpenSocialConnections("following", targetUserId, resolvedProfileName);
+              }}
+              disabled={!onOpenSocialConnections || !targetUserId || isFollowMetaLoading}
+            >
+              <Text style={styles.followMetaText}>
+                {isFollowMetaLoading ? "... Following" : `${followingCount} Following`}
+              </Text>
+            </Pressable>
           </View>
 
           {isOwnProfile && onOpenDiscoverUsers ? (
@@ -473,13 +571,24 @@ export function ProfileScreen({
                 style={styles.profileInput}
                 editable={!isSavingIdentity}
               />
+              <TextInput
+                value={bioDraft}
+                onChangeText={setBioDraft}
+                placeholder="Bio"
+                placeholderTextColor="#8F8AA6"
+                style={[styles.profileInput, styles.profileBioInput]}
+                editable={!isSavingIdentity}
+                multiline
+                textAlignVertical="top"
+                maxLength={240}
+              />
               <View style={styles.editActionsRow}>
                 <Pressable
                   style={[styles.editActionButton, styles.editSaveButton]}
                   onPress={() => {
                     void onSaveIdentity();
                   }}
-                  disabled={isSavingIdentity}
+                  disabled={isSavingIdentity || isAuthLoading || !currentUserId}
                 >
                   <Text style={styles.editSaveButtonText}>{isSavingIdentity ? "Saving..." : "Save"}</Text>
                 </Pressable>
@@ -488,6 +597,7 @@ export function ProfileScreen({
                   onPress={() => {
                     setDisplayNameDraft(profileDisplayNameState || "Arie");
                     setUsernameDraft(profileUsername);
+                    setBioDraft(profileBio);
                     setIdentityError(null);
                     setIdentitySuccess(null);
                     setIsEditingIdentity(false);
@@ -524,9 +634,39 @@ export function ProfileScreen({
       {isOwnProfile ? (
         <>
           <View style={styles.statsRow}>
-            <StatCard value={records.length} label="Records" />
-            <StatCard value={followingCount} label="Following" />
-            <StatCard value={followerCount} label="Followers" />
+            <StatCard
+              value={records.length}
+              label="Records"
+              onPress={() => {
+                if (!targetUserId || !onOpenProfileRecords) {
+                  return;
+                }
+
+                onOpenProfileRecords(targetUserId, resolvedProfileName);
+              }}
+            />
+            <StatCard
+              value={followingCount}
+              label="Following"
+              onPress={() => {
+                if (!targetUserId || !onOpenSocialConnections) {
+                  return;
+                }
+
+                onOpenSocialConnections("following", targetUserId, resolvedProfileName);
+              }}
+            />
+            <StatCard
+              value={followerCount}
+              label="Followers"
+              onPress={() => {
+                if (!targetUserId || !onOpenSocialConnections) {
+                  return;
+                }
+
+                onOpenSocialConnections("followers", targetUserId, resolvedProfileName);
+              }}
+            />
           </View>
 
           <View style={styles.sectionHeaderRow}>
@@ -626,7 +766,46 @@ export function ProfileScreen({
         </>
       ) : (
         <>
+          <View style={styles.statsRow}>
+            <StatCard
+              value={publicCollectionCount}
+              label="Records"
+              onPress={() => {
+                if (!targetUserId || !onOpenProfileRecords) {
+                  return;
+                }
+
+                onOpenProfileRecords(targetUserId, resolvedProfileName);
+              }}
+            />
+            <StatCard
+              value={followingCount}
+              label="Following"
+              onPress={() => {
+                if (!targetUserId || !onOpenSocialConnections) {
+                  return;
+                }
+
+                onOpenSocialConnections("following", targetUserId, resolvedProfileName);
+              }}
+            />
+            <StatCard
+              value={followerCount}
+              label="Followers"
+              onPress={() => {
+                if (!targetUserId || !onOpenSocialConnections) {
+                  return;
+                }
+
+                onOpenSocialConnections("followers", targetUserId, resolvedProfileName);
+              }}
+            />
+          </View>
+
           <Text style={styles.sectionTitle}>Public Collection Preview</Text>
+          <Text style={styles.publicCollectionHint}>
+            Browsing {resolvedProfileName}&apos;s collection
+          </Text>
 
           {isPublicCollectionLoading ? (
             <View style={styles.emptyFeatureCard}>
@@ -649,15 +828,39 @@ export function ProfileScreen({
 
           {!isPublicCollectionLoading && !publicCollectionError
             ? publicCollectionRecords.map((record) => (
-                <View key={record.id} style={styles.publicRecordCard}>
+                <Pressable
+                  key={record.id}
+                  style={styles.publicRecordCard}
+                  onPress={() => setSelectedPublicRecord(record)}
+                >
                   <View style={styles.publicRecordInfo}>
-                    <Image source={{ uri: record.cover }} style={styles.publicRecordCover} />
+                    <Image
+                      source={{
+                        uri: brokenPublicRecordCoverIds.has(record.id)
+                          ? getFallbackAlbumArtUrl()
+                          : resolveAlbumArtUrl(record.cover, "thumb"),
+                      }}
+                      style={styles.publicRecordCover}
+                      onError={() => {
+                        setBrokenPublicRecordCoverIds((current) => {
+                          if (current.has(record.id)) {
+                            return current;
+                          }
+
+                          const next = new Set(current);
+                          next.add(record.id);
+                          return next;
+                        });
+                      }}
+                    />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.publicRecordAlbum}>{record.album}</Text>
                       <Text style={styles.publicRecordArtist}>{record.artist}</Text>
+                      {record.year ? <Text style={styles.publicRecordMeta}>{record.year}</Text> : null}
+                      <Text style={styles.publicRecordMeta}>{formatAddedAtLabel(record.addedAt)}</Text>
                     </View>
                   </View>
-                </View>
+                </Pressable>
               ))
             : null}
         </>
@@ -685,6 +888,41 @@ export function ProfileScreen({
               <Text style={styles.featureModalNextStepText}>{selectedFeatureTile.nextStep}</Text>
               <Pressable style={styles.featureModalCloseButton} onPress={() => setSelectedFeatureTile(null)}>
                 <Text style={styles.featureModalCloseButtonText}>Close</Text>
+              </Pressable>
+            </>
+          ) : null}
+        </Pressable>
+      </Pressable>
+    </Modal>
+    <Modal
+      transparent
+      visible={!!selectedPublicRecord}
+      animationType="fade"
+      onRequestClose={() => setSelectedPublicRecord(null)}
+    >
+      <Pressable style={styles.featureModalOverlay} onPress={() => setSelectedPublicRecord(null)}>
+        <Pressable style={styles.publicDetailModalCard} onPress={() => {}}>
+          {selectedPublicRecord ? (
+            <>
+              <Text style={styles.publicDetailKicker}>From {resolvedProfileName}&apos;s Collection</Text>
+              <Image
+                source={{
+                  uri: selectedPublicRecordCoverBroken
+                    ? getFallbackAlbumArtUrl()
+                    : resolveAlbumArtUrl(selectedPublicRecord.cover, "detail"),
+                }}
+                style={styles.publicDetailCover}
+                onError={() => setSelectedPublicRecordCoverBroken(true)}
+              />
+              <Text style={styles.publicDetailAlbum}>{selectedPublicRecord.album}</Text>
+              <Text style={styles.publicDetailArtist}>{selectedPublicRecord.artist}</Text>
+              {selectedPublicRecord.year ? (
+                <Text style={styles.publicDetailMeta}>Release year {selectedPublicRecord.year}</Text>
+              ) : null}
+              <Text style={styles.publicDetailMeta}>{formatAddedAtLabel(selectedPublicRecord.addedAt)}</Text>
+              <Text style={styles.publicDetailReadOnly}>Read-only public record</Text>
+              <Pressable style={styles.featureModalCloseButton} onPress={() => setSelectedPublicRecord(null)}>
+                <Text style={styles.featureModalCloseButtonText}>Back to Profile</Text>
               </Pressable>
             </>
           ) : null}
@@ -747,11 +985,20 @@ const styles = StyleSheet.create({
     marginTop: 6,
     lineHeight: 16,
   },
+  publicCollectionHint: {
+    color: "#A7A1BD",
+    fontSize: 12,
+    marginTop: -4,
+    marginBottom: 10,
+  },
   followMetaRow: {
     flexDirection: "row",
     gap: 8,
     marginTop: 12,
     flexWrap: "wrap",
+  },
+  followMetaButton: {
+    borderRadius: 999,
   },
   followMetaText: {
     color: "#C5BDD7",
@@ -818,6 +1065,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.30)",
     fontWeight: "500",
+  },
+  profileBioInput: {
+    minHeight: 72,
   },
   editActionsRow: {
     flexDirection: "row",
@@ -1096,6 +1346,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(124, 58, 237, 0.20)",
     flexShrink: 0,
   },
+  publicRecordMeta: {
+    color: "#A7A1BD",
+    fontSize: 11,
+    marginTop: 2,
+  },
   publicRecordAlbum: {
     color: "#FFF4D6",
     fontSize: 14,
@@ -1137,6 +1392,53 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.34)",
     padding: 18,
+  },
+  publicDetailModalCard: {
+    width: "88%",
+    maxWidth: 420,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.16)",
+    backgroundColor: "rgba(11, 11, 17, 0.98)",
+    padding: 18,
+    alignItems: "center",
+  },
+  publicDetailKicker: {
+    color: "#A7A1BD",
+    fontSize: 12,
+    fontWeight: "600",
+    marginBottom: 10,
+  },
+  publicDetailCover: {
+    width: 132,
+    height: 132,
+    borderRadius: 14,
+    marginBottom: 12,
+    backgroundColor: "#272738",
+  },
+  publicDetailAlbum: {
+    color: "#FFF4D6",
+    fontSize: 18,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  publicDetailArtist: {
+    color: "#C7C7D1",
+    fontSize: 14,
+    marginTop: 4,
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  publicDetailMeta: {
+    color: "#A7A1BD",
+    fontSize: 12,
+    marginTop: 2,
+  },
+  publicDetailReadOnly: {
+    color: "#C4BEE0",
+    fontSize: 12,
+    marginTop: 10,
+    marginBottom: 8,
   },
   featureModalIcon: {
     fontSize: 30,

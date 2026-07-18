@@ -30,6 +30,8 @@ import { ProfileScreen } from "../../screens/ProfileScreen";
 import { StoreDetailScreen } from "../../screens/StoreDetailScreen";
 import { HomeScreen } from "../../screens/HomeScreen";
 import { DiscoverUsersScreen } from "../../screens/DiscoverUsersScreen";
+import { SocialConnectionsScreen } from "../../screens/SocialConnectionsScreen";
+import { PublicCollectionScreen } from "../../screens/PublicCollectionScreen";
 import { ConfirmPurchaseDetailsModal } from "../../components/ConfirmPurchaseDetailsModal";
 import { StatCard } from "../../components/StatCard";
 import { TopBar } from "../../components/TopBar";
@@ -46,6 +48,7 @@ import {
 } from "../../hooks/store-discovery";
 import { getDiscoverUsers, type DiscoverUser } from "../../hooks/discover-users";
 import { loadFollowingActivity, type FollowingActivityItem } from "../../hooks/following-activity";
+import type { SocialConnectionsMode, SocialConnectionUser } from "../../hooks/social-connections";
 import {
   loadUserAchievementEarnedAt,
   persistAchievementEarnedAt,
@@ -148,6 +151,9 @@ export default function App() {
   const [storesMessage, setStoresMessage] = useState("");
   const [isLoadingStores, setIsLoadingStores] = useState(false);
   const [hasLoadedStores, setHasLoadedStores] = useState(false);
+  const [storesViewMode, setStoresViewMode] = useState<"all" | "visited">("all");
+  const [storeCheckInMutationStoreId, setStoreCheckInMutationStoreId] = useState<string | null>(null);
+  const [storeCheckInError, setStoreCheckInError] = useState<string | null>(null);
   const [recordStateSource, setRecordStateSource] = useState<"cloud" | "local">("local");
   const [loaded, setLoaded] = useState(false);
   const [showPurchaseModal, setShowPurchaseModal] = useState(false);
@@ -161,7 +167,19 @@ export default function App() {
   const [followingActivityError, setFollowingActivityError] = useState<string | null>(null);
   const [selectedProfileUserId, setSelectedProfileUserId] = useState<string | null>(null);
   const [selectedProfileDisplayName, setSelectedProfileDisplayName] = useState<string | null>(null);
-  const [profileBackScreen, setProfileBackScreen] = useState<"Home" | "DiscoverUsers">("Home");
+  const [profileBackScreen, setProfileBackScreen] = useState<"Home" | "DiscoverUsers" | "SocialList">("Home");
+  const [socialListMode, setSocialListMode] = useState<SocialConnectionsMode>("followers");
+  const [socialListViewedUserId, setSocialListViewedUserId] = useState<string | null>(null);
+  const [socialListViewedDisplayName, setSocialListViewedDisplayName] = useState<string>("Collector");
+  const [socialListBackProfileUserId, setSocialListBackProfileUserId] = useState<string | null>(null);
+  const [socialListBackProfileDisplayName, setSocialListBackProfileDisplayName] = useState<string | null>(null);
+  const [socialListBackOrigin, setSocialListBackOrigin] = useState<"Home" | "DiscoverUsers">("Home");
+  const [publicCollectionViewedUserId, setPublicCollectionViewedUserId] = useState<string | null>(null);
+  const [publicCollectionViewedDisplayName, setPublicCollectionViewedDisplayName] = useState<string>("Collector");
+  const [publicCollectionBackOrigin, setPublicCollectionBackOrigin] = useState<"Home" | "DiscoverUsers" | "SocialList">("Home");
+  const [publicCollectionBackProfileUserId, setPublicCollectionBackProfileUserId] = useState<string | null>(null);
+  const [publicCollectionBackProfileDisplayName, setPublicCollectionBackProfileDisplayName] =
+    useState<string | null>(null);
   const [recordBeingPromoted, setRecordBeingPromoted] = useState<RecordItem | null>(null);
   const [purchasePrice, setPurchasePrice] = useState("");
   const [purchaseDate, setPurchaseDate] = useState("");
@@ -225,6 +243,14 @@ export default function App() {
     () => Object.values(storeCheckIns).filter((count) => (count ?? 0) > 0).length,
     [storeCheckIns]
   );
+
+  const visibleStores = useMemo(() => {
+    if (storesViewMode === "visited") {
+      return stores.filter((store) => (storeCheckIns[store.id] ?? 0) > 0);
+    }
+
+    return stores;
+  }, [storeCheckIns, stores, storesViewMode]);
 
   const placeholderCover =
     "https://upload.wikimedia.org/wikipedia/commons/3/3c/No-album-art.png";
@@ -509,6 +535,26 @@ export default function App() {
   const openDiscoverUsers = useCallback(() => {
     setDiscoverSearchText("");
     setScreen("DiscoverUsers");
+  }, []);
+
+  const openCollection = useCallback(() => {
+    setScreen("Collection");
+  }, []);
+
+  const openWishlist = useCallback(() => {
+    setScreen("Wishlist");
+  }, []);
+
+  const openStoresAll = useCallback(() => {
+    setDetailStore(null);
+    setStoresViewMode("all");
+    setScreen("Stores");
+  }, []);
+
+  const openStoresVisited = useCallback(() => {
+    setDetailStore(null);
+    setStoresViewMode("visited");
+    setScreen("Stores");
   }, []);
 
   const loadFollowingFeed = useCallback(
@@ -860,13 +906,77 @@ export default function App() {
     }
   }
 
-  function checkIn(store: StoreItem) {
-    setActivity((currentActivity) => [`Checked in at ${store.name}`, ...currentActivity]);
-    setStoreCheckIns((current) => ({
-      ...current,
-      [store.id]: (current[store.id] ?? 0) + 1,
-    }));
-    showSuccess(`✓ Checked in at ${store.name}`);
+  async function checkIn(store: StoreItem): Promise<void> {
+    const storeId = store.id.trim();
+
+    if (!storeId || storeCheckInMutationStoreId === storeId) {
+      return;
+    }
+
+    setStoreCheckInMutationStoreId(storeId);
+    setStoreCheckInError(null);
+
+    try {
+      setActivity((currentActivity) => [`Checked in at ${store.name}`, ...currentActivity]);
+      setStoreCheckIns((current) => ({
+        ...current,
+        [storeId]: (current[storeId] ?? 0) + 1,
+      }));
+      showSuccess(`✓ Checked in at ${store.name}`);
+    } finally {
+      setStoreCheckInMutationStoreId(null);
+    }
+  }
+
+  async function undoCheckIn(store: StoreItem): Promise<void> {
+    const storeId = store.id.trim();
+
+    if (!storeId || storeCheckInMutationStoreId === storeId) {
+      return;
+    }
+
+    setStoreCheckInMutationStoreId(storeId);
+    setStoreCheckInError(null);
+
+    try {
+      let didUpdate = false;
+
+      setStoreCheckIns((current) => {
+        const currentCount = current[storeId] ?? 0;
+        if (currentCount <= 0) {
+          return current;
+        }
+
+        didUpdate = true;
+
+        if (currentCount === 1) {
+          const { [storeId]: _removed, ...rest } = current;
+          return rest;
+        }
+
+        return {
+          ...current,
+          [storeId]: currentCount - 1,
+        };
+      });
+
+      if (!didUpdate) {
+        return;
+      }
+
+      showSuccess("✓ Check-in removed");
+    } catch (error) {
+      if (__DEV__) {
+        console.warn("[RecordQuest][stores] undo check-in failed", {
+          storeId,
+          message: error instanceof Error ? error.message : "unknown error",
+        });
+      }
+
+      setStoreCheckInError("We couldn't undo this check-in. Please try again.");
+    } finally {
+      setStoreCheckInMutationStoreId(null);
+    }
   }
 
   function removeRecord(item: RecordItem) {
@@ -986,9 +1096,9 @@ export default function App() {
           </View>
 
           <View style={styles.statsRow}>
-            <StatCard value={records.length} label="Records" />
-            <StatCard value={wishlist.length} label="Wishlist" />
-            <StatCard value={visitedStoreCount} label="Stores Visited" />
+            <StatCard value={records.length} label="Records" onPress={openCollection} />
+            <StatCard value={wishlist.length} label="Wishlist" onPress={openWishlist} />
+            <StatCard value={visitedStoreCount} label="Stores Visited" onPress={openStoresVisited} />
           </View>
 
           <Text style={styles.sectionTitle}>Quick Actions</Text>
@@ -998,21 +1108,21 @@ export default function App() {
               title="My Collection"
               subtitle="View, sort, and search your records"
               icon="💿"
-              onPress={() => setScreen("Collection")}
+              onPress={openCollection}
               accentColor="#7C3AED"
             />
             <HomeCard
               title="Wishlist"
               subtitle="Albums to hunt down next"
               icon="💗"
-              onPress={() => setScreen("Wishlist")}
+              onPress={openWishlist}
               accentColor="#EC4899"
             />
             <HomeCard
               title="Find Stores"
               subtitle="Nearby shops and crate spots"
               icon="📍"
-              onPress={() => setScreen("Stores")}
+              onPress={openStoresAll}
               accentColor="#14B8A6"
             />
             <HomeCard
@@ -1190,6 +1300,9 @@ export default function App() {
           storeCheckIns={storeCheckIns}
           openDirections={openDirections}
           checkIn={checkIn}
+          undoCheckIn={undoCheckIn}
+          isMutatingCheckIn={storeCheckInMutationStoreId === detailStore.id}
+          errorMessage={storeCheckInError}
           onBack={() => {
             setDetailStore(null);
             setScreen("Stores");
@@ -1224,7 +1337,54 @@ export default function App() {
             setDiscoverSearchText("");
             setScreen("DiscoverUsers");
           }}
+          onOpenSocialConnections={(mode, viewedUserId, viewedDisplayName) => {
+            const trimmedViewedUserId = viewedUserId.trim();
+
+            if (!trimmedViewedUserId) {
+              return;
+            }
+
+            setSocialListMode(mode);
+            setSocialListViewedUserId(trimmedViewedUserId);
+            setSocialListViewedDisplayName(viewedDisplayName || "Collector");
+            setSocialListBackProfileUserId(trimmedViewedUserId);
+            setSocialListBackProfileDisplayName(viewedDisplayName || "Collector");
+            setSocialListBackOrigin(
+              profileBackScreen === "DiscoverUsers" ? "DiscoverUsers" : "Home"
+            );
+            setScreen("SocialList");
+          }}
+          onOpenProfileRecords={(viewedUserId, viewedDisplayName) => {
+            const trimmedViewedUserId = viewedUserId.trim();
+
+            if (!trimmedViewedUserId) {
+              return;
+            }
+
+            if (trimmedViewedUserId === (user?.id ?? "")) {
+              setScreen("Collection");
+              return;
+            }
+
+            setPublicCollectionViewedUserId(trimmedViewedUserId);
+            setPublicCollectionViewedDisplayName(viewedDisplayName || "Collector");
+            setPublicCollectionBackProfileUserId(trimmedViewedUserId);
+            setPublicCollectionBackProfileDisplayName(viewedDisplayName || "Collector");
+            setPublicCollectionBackOrigin(
+              profileBackScreen === "SocialList"
+                ? "SocialList"
+                : profileBackScreen === "DiscoverUsers"
+                  ? "DiscoverUsers"
+                  : "Home"
+            );
+            setScreen("PublicCollection");
+          }}
           onBack={() => {
+            if (profileBackScreen === "SocialList") {
+              setScreen("SocialList");
+              return;
+            }
+
             if (profileBackScreen === "DiscoverUsers") {
               setScreen("DiscoverUsers");
               return;
@@ -1234,6 +1394,48 @@ export default function App() {
           }}
         />
       )}
+
+      {screen === "PublicCollection" && publicCollectionViewedUserId ? (
+        <PublicCollectionScreen
+          viewedUserId={publicCollectionViewedUserId}
+          viewedDisplayName={publicCollectionViewedDisplayName}
+          onBack={() => {
+            setSelectedProfileUserId(publicCollectionBackProfileUserId);
+            setSelectedProfileDisplayName(publicCollectionBackProfileDisplayName);
+
+            if (publicCollectionBackOrigin === "SocialList") {
+              setProfileBackScreen("SocialList");
+            } else if (publicCollectionBackOrigin === "DiscoverUsers") {
+              setProfileBackScreen("DiscoverUsers");
+            } else {
+              setProfileBackScreen("Home");
+            }
+
+            setScreen("Profile");
+          }}
+        />
+      ) : null}
+
+      {screen === "SocialList" && socialListViewedUserId ? (
+        <SocialConnectionsScreen
+          mode={socialListMode}
+          viewedUserId={socialListViewedUserId}
+          viewedDisplayName={socialListViewedDisplayName}
+          currentUserId={user?.id ?? null}
+          onOpenUser={(socialUser: SocialConnectionUser) => {
+            setSelectedProfileUserId(socialUser.userId);
+            setSelectedProfileDisplayName(socialUser.displayName);
+            setProfileBackScreen("SocialList");
+            setScreen("Profile");
+          }}
+          onBack={() => {
+            setSelectedProfileUserId(socialListBackProfileUserId);
+            setSelectedProfileDisplayName(socialListBackProfileDisplayName);
+            setProfileBackScreen(socialListBackOrigin);
+            setScreen("Profile");
+          }}
+        />
+      ) : null}
 
       {screen === "DiscoverUsers" && (
         <DiscoverUsersScreen
@@ -1260,7 +1462,7 @@ export default function App() {
       {screen === "Stores" && !detailStore && (
         <ScrollView contentContainerStyle={styles.page}>
           <TopBar
-            title="Find Stores"
+            title={storesViewMode === "visited" ? "Visited Stores" : "Find Stores"}
             back={() => setScreen("Home")}
             rightIcon="↻"
             rightAction={refreshNearbyStores}
@@ -1268,21 +1470,32 @@ export default function App() {
             rightActionDisabled={isLoadingStores}
             rightActionLoading={isLoadingStores}
           />
-          <Text style={styles.screenSubtitle}>Nearby record stores and music shops</Text>
+          <Text style={styles.screenSubtitle}>
+            {storesViewMode === "visited"
+              ? "Stores you have checked into"
+              : "Nearby record stores and music shops"}
+          </Text>
           {isLoadingStores ? (
             <View style={styles.storeLoadingRow}>
               <ActivityIndicator size="small" color="#A78BFA" />
               <Text style={styles.storeStatusText}>Finding nearby stores...</Text>
             </View>
           ) : null}
+          {storeCheckInError ? <Text style={styles.storeStatusErrorText}>{storeCheckInError}</Text> : null}
           {storesMessage ? <Text style={styles.storeStatusText}>{storesMessage}</Text> : null}
-          {stores.length === 0 ? (
+          {visibleStores.length === 0 ? (
             <View style={styles.emptyFeatureCard}>
-              <Text style={styles.emptyFeatureTitle}>No stores found</Text>
-              <Text style={styles.emptyFeatureText}>Try adjusting your location</Text>
+              <Text style={styles.emptyFeatureTitle}>
+                {storesViewMode === "visited" ? "No visited stores yet" : "No stores found"}
+              </Text>
+              <Text style={styles.emptyFeatureText}>
+                {storesViewMode === "visited"
+                  ? "Check in at a store to see it here."
+                  : "Try adjusting your location"}
+              </Text>
             </View>
           ) : (
-            stores.map((store) => (
+            visibleStores.map((store) => (
               <View key={store.id} style={styles.storeCard}>
                 <View style={styles.storeHeader}>
                   <View style={{ flex: 1 }}>
@@ -1307,7 +1520,9 @@ export default function App() {
                   }}>
                     <Text style={styles.storeButtonText}>View Store</Text>
                   </Pressable>
-                  <Pressable style={[styles.storeButton, styles.checkInButton]} onPress={() => checkIn(store)}>
+                  <Pressable style={[styles.storeButton, styles.checkInButton]} onPress={() => {
+                    void checkIn(store);
+                  }}>
                     <Text style={[styles.storeButtonText, styles.checkInButtonText]}>Check In</Text>
                   </Pressable>
                 </View>
@@ -1329,8 +1544,7 @@ export default function App() {
         <NavItem label="Home" active={screen === "Home"} onPress={() => setScreen("Home")} />
         <NavItem label="Library" active={screen === "Collection"} onPress={() => setScreen("Collection")} />
         <NavItem label="Stores" active={screen === "Stores" || screen === "StoreDetail"} onPress={() => {
-          setDetailStore(null);
-          setScreen("Stores");
+          openStoresAll();
         }} />
         <NavItem label="Wishlist" active={screen === "Wishlist"} onPress={() => setScreen("Wishlist")} />
         <NavItem
@@ -2039,6 +2253,12 @@ const styles = StyleSheet.create({
   },
   storeStatusText: {
     color: "#C7C7D1",
+    fontSize: 12,
+    marginBottom: 8,
+    fontWeight: "500",
+  },
+  storeStatusErrorText: {
+    color: "#FCA5A5",
     fontSize: 12,
     marginBottom: 8,
     fontWeight: "500",

@@ -126,6 +126,14 @@ const GOOGLE_BETA_RADIUS_METERS = SEARCH_RADIUS_METERS;
 const GOOGLE_PLACES_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY?.trim();
 const GOOGLE_CACHE_VERSION = "v2-multi-query";
 
+const EXCLUDED_STORE_RULES = [
+  {
+    // Targeted beta exclusion for a confirmed false-positive non-vinyl result.
+    normalizedName: "bky music",
+    normalizedAddressFragment: "368 hillside ave needham ma",
+  },
+] as const;
+
 const googlePlacesSessionCache = new Map<string, StoreItem[]>();
 
 function logStoreDev(message: string, details?: unknown): void {
@@ -333,6 +341,30 @@ function normalizeStoreName(name: string): string {
     .toLowerCase()
     .replace(/[.,'’`]/g, "")
     .replace(/\s+/g, " ");
+}
+
+function normalizeStoreAddress(address: string): string {
+  return address
+    .trim()
+    .toLowerCase()
+    .replace(/[.,'’`#]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function shouldExcludeStoreCandidate(name: string, address: string): boolean {
+  const normalizedName = normalizeStoreName(name);
+  const normalizedAddress = normalizeStoreAddress(address);
+
+  for (const rule of EXCLUDED_STORE_RULES) {
+    if (
+      normalizedName === rule.normalizedName &&
+      normalizedAddress.includes(rule.normalizedAddressFragment)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function hasValidCoordinates(store: Pick<CuratedStoreSeed, "latitude" | "longitude">): boolean {
@@ -543,6 +575,15 @@ function mapGooglePlacesToStores(
     if (typeof lat !== "number" || typeof lon !== "number") continue;
     if (!shouldKeepGooglePlace(place)) continue;
 
+    if (shouldExcludeStoreCandidate(name, address)) {
+      logStoreDev("[RecordQuest][stores] excluded targeted false-positive result", {
+        name,
+        address,
+        placeId,
+      });
+      continue;
+    }
+
     const category = getGoogleStoreCategory(place);
     const distanceMiles = haversineDistanceMiles(latitude, longitude, lat, lon);
     const relevance = getGoogleStoreRelevance(place);
@@ -686,6 +727,10 @@ function getCuratedSourceOfTruth(): CuratedStoreSeed[] {
   const byBranch = new Map<string, CuratedStoreSeed>();
 
   for (const store of CURATED_BOSTON_STORES) {
+    if (shouldExcludeStoreCandidate(store.name, store.address)) {
+      continue;
+    }
+
     const key = normalizeStoreDedupKey(store.name, store.address);
     if (!key) continue;
 

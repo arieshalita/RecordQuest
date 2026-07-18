@@ -5,6 +5,7 @@ export type PublicProfileIdentity = {
   username: string;
   displayName: string;
   avatarUrl?: string;
+  bio?: string;
 };
 
 export type SaveProfileIdentityResult = {
@@ -27,13 +28,62 @@ function mapRowToIdentity(row: Record<string, unknown>): PublicProfileIdentity |
   const username = readString(row.username);
   const displayName = readString(row.display_name) || username || "RecordQuest User";
   const avatarUrl = readString(row.avatar_url) || undefined;
+  const bio = readString(row.bio) || undefined;
 
   return {
     userId,
     username,
     displayName,
     avatarUrl,
+    bio,
   };
+}
+
+function genericProfileSaveError(): SaveProfileIdentityResult {
+  return {
+    success: false,
+    error: "We couldn't save your profile. Please try again.",
+  };
+}
+
+function logProfileSaveFailure(context: {
+  stage: "lookup" | "write";
+  operation: "update" | "insert";
+  authUid: string;
+  targetUserId: string;
+  rowExists: boolean;
+  code: string | null;
+  message: string | null;
+  details: string | null;
+  hint: string | null;
+}): void {
+  if (!__DEV__) {
+    return;
+  }
+
+  console.warn("[RecordQuest][profile][save] failed", {
+    stage: context.stage,
+    operation: context.operation,
+    authUid: context.authUid,
+    targetUserId: context.targetUserId,
+    ownershipColumn: "user_id",
+    rowExists: context.rowExists,
+    errorCode: context.code,
+    errorMessage: context.message,
+    errorDetails: context.details,
+    errorHint: context.hint,
+  });
+}
+
+async function getAuthenticatedUserId(): Promise<string | null> {
+  const { data, error } = await supabase.auth.getUser();
+
+  if (error) {
+    console.warn("[RecordQuest][profile] auth user lookup failed:", error.message);
+    return null;
+  }
+
+  return data.user?.id?.trim() || null;
 }
 
 export function sanitizeUsername(input: string): string {
@@ -63,7 +113,7 @@ export async function getProfileIdentity(userId: string): Promise<PublicProfileI
 
   const { data, error } = await supabase
     .from("profiles")
-    .select("id,user_id,username,display_name,avatar_url")
+    .select("id,user_id,username,display_name,avatar_url,bio")
     .eq("user_id", trimmedUserId)
     .maybeSingle();
 
@@ -77,14 +127,24 @@ export async function getProfileIdentity(userId: string): Promise<PublicProfileI
 export async function saveOwnProfileIdentity(
   userId: string,
   displayNameInput: string,
-  usernameInput: string
+  usernameInput: string,
+  bioInput = ""
 ): Promise<SaveProfileIdentityResult> {
-  const trimmedUserId = userId.trim();
-  if (!trimmedUserId) {
+  const authUserId = await getAuthenticatedUserId();
+  if (!authUserId) {
     return {
       success: false,
       error: "You must be signed in to update your profile.",
     };
+  }
+
+  const trimmedUserId = userId.trim();
+  if (trimmedUserId && trimmedUserId !== authUserId) {
+    console.warn("[RecordQuest][profile] attempted save with mismatched user id", {
+      suppliedUserId: trimmedUserId,
+      authUserId,
+    });
+    return genericProfileSaveError();
   }
 
   const sanitizedUsername = sanitizeUsername(usernameInput);
@@ -104,23 +164,72 @@ export async function saveOwnProfileIdentity(
     };
   }
 
-  const existingProfile = await getProfileIdentity(trimmedUserId);
+  const trimmedBio = bioInput.trim();
 
-  const { data, error } = await supabase
+  const existingLookup = await supabase
     .from("profiles")
-    .upsert(
-      {
-        user_id: trimmedUserId,
-        username: sanitizedUsername,
-        display_name: trimmedDisplayName,
-        avatar_url: existingProfile?.avatarUrl ?? null,
-      },
-      { onConflict: "user_id" }
-    )
-    .select("id,user_id,username,display_name,avatar_url")
-    .single();
+    .select("id,user_id,username,display_name,avatar_url,bio")
+    .eq("user_id", authUserId)
+    .maybeSingle();
+
+  if (existingLookup.error) {
+    logProfileSaveFailure({
+      stage: "lookup",
+      operation: "update",
+      authUid: authUserId,
+      targetUserId: authUserId,
+      rowExists: false,
+      code: existingLookup.error.code,
+      message: existingLookup.error.message,
+      details: existingLookup.error.details,
+      hint: existingLookup.error.hint,
+    });
+
+    return genericProfileSaveError();
+  }
+
+  const existingProfile =
+    existingLookup.data && typeof existingLookup.data === "object"
+      ? mapRowToIdentity(existingLookup.data as Record<string, unknown>)
+      : null;
+
+  const writeResult = existingProfile
+    ? await supabase
+        .from("profiles")
+        .update({
+          username: sanitizedUsername,
+          display_name: trimmedDisplayName,
+          bio: trimmedBio,
+        })
+        .eq("user_id", authUserId)
+        .select("id,user_id,username,display_name,avatar_url,bio")
+        .single()
+    : await supabase
+        .from("profiles")
+        .insert({
+          user_id: authUserId,
+          username: sanitizedUsername,
+          display_name: trimmedDisplayName,
+          bio: trimmedBio,
+        })
+        .select("id,user_id,username,display_name,avatar_url,bio")
+        .single();
+
+  const { data, error } = writeResult;
 
   if (error) {
+    logProfileSaveFailure({
+      stage: "write",
+      operation: existingProfile ? "update" : "insert",
+      authUid: authUserId,
+      targetUserId: authUserId,
+      rowExists: Boolean(existingProfile),
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
+
     if (error.code === "23505" || /duplicate|unique/i.test(error.message)) {
       return {
         success: false,
@@ -128,10 +237,7 @@ export async function saveOwnProfileIdentity(
       };
     }
 
-    return {
-      success: false,
-      error: error.message,
-    };
+    return genericProfileSaveError();
   }
 
   const profile = mapRowToIdentity((data ?? {}) as Record<string, unknown>);

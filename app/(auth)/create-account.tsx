@@ -10,6 +10,7 @@ import {
 import { router } from "expo-router";
 import { AuthScreenShell } from "../../components/auth/AuthScreenShell";
 import { useAuth } from "../../providers/AuthProvider";
+import { isValidEmail, mapSignUpErrorMessage, normalizeEmail } from "../../utils/auth-input";
 
 export default function CreateAccountScreen() {
   const { signUp } = useAuth();
@@ -24,27 +25,38 @@ export default function CreateAccountScreen() {
     setError("");
     setSuccessMessage("");
 
-    if (!email.trim() || !password.trim() || !confirmPassword.trim()) {
+    const normalizedEmail = normalizeEmail(email);
+    const trimmedPassword = password.trim();
+    const trimmedConfirmPassword = confirmPassword.trim();
+
+    if (!normalizedEmail || !trimmedPassword || !trimmedConfirmPassword) {
       setError("Complete all fields to continue.");
       return;
     }
 
-    if (password.length < 8) {
+    if (!isValidEmail(normalizedEmail)) {
+      setError("Enter a valid email address.");
+      return;
+    }
+
+    if (trimmedPassword.length < 8) {
       setError("Use a password with at least 8 characters.");
       return;
     }
 
-    if (password !== confirmPassword) {
+    if (trimmedPassword !== trimmedConfirmPassword) {
       setError("Passwords do not match.");
       return;
     }
 
+    setEmail(normalizedEmail);
+
     setIsSubmitting(true);
-    const result = await signUp(email, password);
+    const result = await signUp(normalizedEmail, trimmedPassword);
     setIsSubmitting(false);
 
     if (!result.success) {
-      setError(result.error ?? "Could not create account.");
+      setError(mapSignUpErrorMessage(result.error));
       return;
     }
 

@@ -1,13 +1,26 @@
 import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Pressable } from "react-native";
 import { RecordQuestTheme } from "../constants/theme";
 
 interface StatCardProps {
   value: number;
   label: string;
+  onPress?: () => void;
 }
 
-export function StatCard({ value, label }: StatCardProps) {
+export function StatCard({ value, label, onPress }: StatCardProps) {
+  if (onPress) {
+    return (
+      <Pressable
+        style={({ pressed }) => [styles.statCard, pressed ? styles.statCardPressed : null]}
+        onPress={onPress}
+      >
+        <Text style={styles.statValue}>{value}</Text>
+        <Text style={styles.statLabel}>{label}</Text>
+      </Pressable>
+    );
+  }
+
   return (
     <View style={styles.statCard}>
       <Text style={styles.statValue}>{value}</Text>
@@ -31,6 +44,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 1,
+  },
+  statCardPressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.99 }],
   },
   statValue: {
     color: RecordQuestTheme.colors.textPrimary,

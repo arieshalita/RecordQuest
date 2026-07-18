@@ -1,14 +1,23 @@
 import { supabase } from "./supabase-client";
+import { resolveAlbumArtUrl } from "../utils/album-art";
 
 export type PublicRecordPreview = {
   id: number;
   album: string;
   artist: string;
   cover: string;
+  year?: string;
+  addedAt?: string;
 };
 
 export type PublicCollectionPreviewResult = {
   records: PublicRecordPreview[];
+  blockedByPolicy: boolean;
+  error?: string;
+};
+
+export type PublicCollectionCountResult = {
+  count: number;
   blockedByPolicy: boolean;
   error?: string;
 };
@@ -32,8 +41,9 @@ export async function loadPublicCollectionPreview(
 
   const { data, error } = await supabase
     .from("records")
-    .select("id,user_id,album,artist,cover")
+    .select("id,user_id,album,artist,cover,year,added_at")
     .eq("user_id", trimmedUserId)
+    .order("added_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(limit);
 
@@ -44,29 +54,64 @@ export async function loadPublicCollectionPreview(
       records: [],
       blockedByPolicy,
       error: blockedByPolicy
-        ? "Public collection preview is currently unavailable due to RLS policy."
-        : error.message,
+        ? "Public collection preview is currently unavailable."
+        : "We couldn't load this collection preview right now.",
     };
   }
 
   const rows = (Array.isArray(data) ? data : []) as Array<Record<string, unknown>>;
 
-  const records = rows
-    .map((row) => {
-      const id = readNumber(row.id);
-      if (id === null) return null;
+  const records: PublicRecordPreview[] = [];
 
-      return {
-        id,
-        album: readString(row.album, "Untitled Album"),
-        artist: readString(row.artist, "Unknown Artist"),
-        cover: readString(row.cover, "https://upload.wikimedia.org/wikipedia/commons/3/3c/No-album-art.png"),
-      } satisfies PublicRecordPreview;
-    })
-    .filter((record): record is PublicRecordPreview => !!record);
+  for (const row of rows) {
+    const id = readNumber(row.id);
+    if (id === null) {
+      continue;
+    }
+
+    records.push({
+      id,
+      album: readString(row.album, "Untitled Album"),
+      artist: readString(row.artist, "Unknown Artist"),
+      cover: resolveAlbumArtUrl(readString(row.cover), "thumb"),
+      year: readString(row.year) || undefined,
+      addedAt: readString(row.added_at) || undefined,
+    });
+  }
 
   return {
     records,
+    blockedByPolicy: false,
+  };
+}
+
+export async function loadPublicCollectionCount(
+  profileUserId: string
+): Promise<PublicCollectionCountResult> {
+  const trimmedUserId = profileUserId.trim();
+  if (!trimmedUserId) {
+    return { count: 0, blockedByPolicy: false };
+  }
+
+  const { count, error } = await supabase
+    .from("records")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", trimmedUserId);
+
+  if (error) {
+    const blockedByPolicy = error.code === "42501" || /permission denied|policy/i.test(error.message);
+
+    return {
+      count: 0,
+      blockedByPolicy,
+      error: blockedByPolicy
+        ? "Public collection is currently unavailable."
+        : "We couldn't load this collection count right now.",
+    };
+  }
+
+  return {
+    count: count ?? 0,
     blockedByPolicy: false,
   };
 }
