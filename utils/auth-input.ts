@@ -19,6 +19,14 @@ export function mapSignInErrorMessage(error: string | null | undefined): string 
     return "Incorrect email or password.";
   }
 
+  if (source.includes("rate limit") || source.includes("too many")) {
+    return "Too many sign-in attempts. Please wait and try again.";
+  }
+
+  if (source.includes("network") || source.includes("failed to fetch") || source.includes("fetch")) {
+    return "Network error. Check your connection and try again.";
+  }
+
   return "Could not sign in right now. Please try again.";
 }
 
@@ -27,6 +35,14 @@ export function mapSignUpErrorMessage(error: string | null | undefined): string 
 
   if (source.includes("already registered") || source.includes("already been registered")) {
     return "An account with this email already exists. Try signing in instead.";
+  }
+
+  if (source.includes("rate limit") || source.includes("too many")) {
+    return "Too many sign-up attempts. Please wait and try again.";
+  }
+
+  if (source.includes("network") || source.includes("failed to fetch") || source.includes("fetch")) {
+    return "Network error. Check your connection and try again.";
   }
 
   if (source.includes("password")) {

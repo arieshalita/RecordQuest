@@ -199,7 +199,35 @@ export function ProfileScreen({
   const [selectedPublicRecord, setSelectedPublicRecord] = useState<PublicRecordPreview | null>(null);
   const [selectedFeatureTile, setSelectedFeatureTile] = useState<FeatureTile | null>(null);
   const [showInsights, setShowInsights] = useState(false);
+  const [profileIdentityUserId, setProfileIdentityUserId] = useState<string | null>(null);
   const saveIdentityInFlightRef = useRef(false);
+
+  const ownProfileFallbackName = useMemo(() => {
+    const metadataDisplayName = typeof user?.user_metadata?.display_name === "string"
+      ? user.user_metadata.display_name.trim()
+      : "";
+
+    if (metadataDisplayName) {
+      return metadataDisplayName;
+    }
+
+    const metadataUsername = typeof user?.user_metadata?.username === "string"
+      ? user.user_metadata.username.trim()
+      : "";
+
+    if (metadataUsername) {
+      return metadataUsername;
+    }
+
+    if (user?.email) {
+      const fallback = user.email.split("@")[0]?.trim();
+      if (fallback) {
+        return fallback;
+      }
+    }
+
+    return "Collector";
+  }, [user?.email, user?.user_metadata?.display_name, user?.user_metadata?.username]);
 
   const analytics = calculateCollectionAnalytics(records, wishlist, storeCheckIns, activity);
   const allBadges = useMemo(
@@ -217,9 +245,8 @@ export function ProfileScreen({
 
     return map;
   }, [achievementCategories]);
-  const resolvedProfileName =
-    profileDisplayNameState ||
-    (isOwnProfile ? "Arie" : profileDisplayName ?? "Collector");
+  const resolvedProfileName = profileDisplayNameState || (isOwnProfile ? ownProfileFallbackName : profileDisplayName ?? "Collector");
+  const isCurrentProfileIdentity = profileIdentityUserId === targetUserId;
 
   const profileInitial = useMemo(() => {
     const source = resolvedProfileName || profileUsername || "R";
@@ -296,6 +323,9 @@ export function ProfileScreen({
     }
 
     setIsFollowMetaLoading(true);
+    setFollowerCount(0);
+    setFollowingCount(0);
+    setFollowingState(false);
     setFollowError(null);
 
     try {
@@ -323,19 +353,34 @@ export function ProfileScreen({
     if (!targetUserId) {
       setProfileUsername("");
       setProfileDisplayNameState("");
+      setProfileBio("");
+      setDisplayNameDraft("");
+      setUsernameDraft("");
+      setBioDraft("");
+      setProfileIdentityUserId(null);
       setIsProfileIdentityLoading(false);
       return;
     }
 
     setIsProfileIdentityLoading(true);
+    setProfileDisplayNameState("");
+    setProfileUsername("");
+    setProfileBio("");
+
+    if (isOwnProfile) {
+      setDisplayNameDraft("");
+      setUsernameDraft("");
+      setBioDraft("");
+    }
 
     try {
       const profile = await getProfileIdentity(targetUserId);
-      const fallbackName = isOwnProfile ? "Arie" : profileDisplayName ?? "Collector";
+      const fallbackName = isOwnProfile ? ownProfileFallbackName : profileDisplayName ?? "Collector";
 
       setProfileDisplayNameState(profile?.displayName ?? fallbackName);
       setProfileUsername(profile?.username ?? "");
       setProfileBio(profile?.bio ?? "");
+      setProfileIdentityUserId(targetUserId);
 
       if (isOwnProfile) {
         setDisplayNameDraft(profile?.displayName ?? fallbackName);
@@ -345,7 +390,7 @@ export function ProfileScreen({
     } finally {
       setIsProfileIdentityLoading(false);
     }
-  }, [isOwnProfile, profileDisplayName, targetUserId]);
+  }, [isOwnProfile, ownProfileFallbackName, profileDisplayName, targetUserId]);
 
   useEffect(() => {
     void refreshProfileIdentity();
@@ -391,6 +436,12 @@ export function ProfileScreen({
       setSelectedPublicRecord(null);
     }
   }, [isOwnProfile]);
+
+  useEffect(() => {
+    setSelectedPublicRecord(null);
+    setIdentityError(null);
+    setIdentitySuccess(null);
+  }, [targetUserId]);
 
   async function onToggleFollow() {
     if (!targetUserId || isOwnProfile || isFollowActionLoading) {
@@ -476,16 +527,18 @@ export function ProfileScreen({
           <Text style={styles.avatarText}>{profileInitial}</Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.profileName}>{resolvedProfileName}</Text>
+          <Text style={styles.profileName}>{isCurrentProfileIdentity ? resolvedProfileName : (isOwnProfile ? ownProfileFallbackName : (profileDisplayName ?? "Collector"))}</Text>
           <Text style={styles.profileSub}>
-            {isProfileIdentityLoading
+            {!isCurrentProfileIdentity || isProfileIdentityLoading
               ? "Loading profile..."
               : profileUsername
                 ? `@${profileUsername}`
                 : "Vinyl collector"}
           </Text>
           <Text style={styles.profileBio}>
-            {profileBio || "Building the ultimate crate-digging log."}
+            {!isCurrentProfileIdentity || isProfileIdentityLoading
+              ? "Loading profile..."
+              : profileBio || "Building the ultimate crate-digging log."}
           </Text>
           <View style={styles.followMetaRow}>
             <Pressable
@@ -588,7 +641,7 @@ export function ProfileScreen({
                 <Pressable
                   style={[styles.editActionButton, styles.editCancelButton]}
                   onPress={() => {
-                    setDisplayNameDraft(profileDisplayNameState || "Arie");
+                    setDisplayNameDraft(profileDisplayNameState || ownProfileFallbackName);
                     setUsernameDraft(profileUsername);
                     setBioDraft(profileBio);
                     setIdentityError(null);

@@ -36,19 +36,36 @@ export default function SignInScreen() {
       return;
     }
 
-    setEmail(normalizedEmail);
-
-    setIsSubmitting(true);
-    const result = await signIn(normalizedEmail, trimmedPassword, staySignedIn);
-    setIsSubmitting(false);
-
-    if (!result.success) {
-      setError(mapSignInErrorMessage(result.error));
+    if (trimmedPassword.length < 8) {
+      setError("Use your full password to sign in.");
       return;
     }
 
-    router.replace("/(tabs)");
+    setEmail(normalizedEmail);
+
+    setIsSubmitting(true);
+    try {
+      const result = await signIn(normalizedEmail, trimmedPassword, staySignedIn);
+
+      if (!result.success) {
+        setError(mapSignInErrorMessage(result.error));
+        return;
+      }
+
+      if (result.session) {
+        router.replace("/(tabs)");
+        return;
+      }
+
+      setError("Could not sign in right now. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   }
+
+  const normalizedEmail = normalizeEmail(email);
+  const trimmedPassword = password.trim();
+  const canSubmit = isValidEmail(normalizedEmail) && trimmedPassword.length >= 8;
 
   return (
     <AuthScreenShell
@@ -103,9 +120,9 @@ export default function SignInScreen() {
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
       <Pressable
-        style={[styles.primaryButton, isSubmitting ? styles.disabledButton : null]}
+        style={[styles.primaryButton, (isSubmitting || !canSubmit) ? styles.disabledButton : null]}
         onPress={handleSignIn}
-        disabled={isSubmitting}
+        disabled={isSubmitting || !canSubmit}
       >
         {isSubmitting ? (
           <ActivityIndicator color="#FFF4D6" />

@@ -76,7 +76,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (!staySignedIn && activeSession) {
         const signOutResult = await supabaseSignOut();
 
-        if (!signOutResult.success) {
+        if (!signOutResult.success && __DEV__) {
           console.warn(
             "[RecordQuest][auth] failed to clear persisted session on cold launch:",
             signOutResult.error ?? "unknown error"
@@ -120,14 +120,17 @@ export function AuthProvider({ children }: PropsWithChildren) {
       signIn: async (email: string, password: string, staySignedIn: boolean) => {
         const result = await signInWithEmail(email, password);
 
-        if (!result.success) {
+        if (!result.success && __DEV__) {
           console.warn("[RecordQuest][auth] signIn failed:", result.error ?? "unknown error");
         }
 
-        if (result.success) {
+        if (result.success && result.session) {
           await setStaySignedInPreference(staySignedIn);
-          setSession(result.session ?? null);
-          setUser(result.user ?? null);
+          setSession(result.session);
+          setUser(result.session.user);
+        } else if (result.success) {
+          setSession(null);
+          setUser(null);
         }
 
         return result;
@@ -135,13 +138,16 @@ export function AuthProvider({ children }: PropsWithChildren) {
       signUp: async (email: string, password: string) => {
         const result = await signUpWithEmail(email, password);
 
-        if (!result.success) {
+        if (!result.success && __DEV__) {
           console.warn("[RecordQuest][auth] signUp failed:", result.error ?? "unknown error");
         }
 
-        if (result.success) {
-          setSession(result.session ?? null);
-          setUser(result.user ?? null);
+        if (result.success && result.session) {
+          setSession(result.session);
+          setUser(result.session.user);
+        } else if (result.success) {
+          setSession(null);
+          setUser(null);
         }
 
         return result;
@@ -149,7 +155,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       signOut: async () => {
         const result = await supabaseSignOut();
 
-        if (!result.success) {
+        if (!result.success && __DEV__) {
           console.warn("[RecordQuest][auth] signOut failed:", result.error ?? "unknown error");
         }
 

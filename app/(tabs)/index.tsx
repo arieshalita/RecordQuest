@@ -189,6 +189,7 @@ export default function App() {
   const [successMessageTimer, setSuccessMessageTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
   const [achievementEarnedAtById, setAchievementEarnedAtById] = useState<Record<string, string | null>>({});
   const didHydrateRef = useRef(false);
+  const lastAuthenticatedUserIdRef = useRef<string | null>(null);
   const lastFollowingFeedLoadRef = useRef(0);
   const hasLoadedFollowingFeedRef = useRef(false);
   const suppressNextTypeaheadRef = useRef(false);
@@ -251,6 +252,34 @@ export default function App() {
 
     return stores;
   }, [storeCheckIns, stores, storesViewMode]);
+
+  useEffect(() => {
+    const nextUserId = user?.id ?? null;
+
+    if (lastAuthenticatedUserIdRef.current === nextUserId) {
+      return;
+    }
+
+    lastAuthenticatedUserIdRef.current = nextUserId;
+    setSelectedProfileUserId(null);
+    setSelectedProfileDisplayName(null);
+    setProfileBackScreen("Home");
+    setSocialListMode("followers");
+    setSocialListViewedUserId(null);
+    setSocialListViewedDisplayName("Collector");
+    setSocialListBackProfileUserId(null);
+    setSocialListBackProfileDisplayName(null);
+    setSocialListBackOrigin("Home");
+    setPublicCollectionViewedUserId(null);
+    setPublicCollectionViewedDisplayName("Collector");
+    setPublicCollectionBackOrigin("Home");
+    setPublicCollectionBackProfileUserId(null);
+    setPublicCollectionBackProfileDisplayName(null);
+    setDiscoverSearchText("");
+    setSelectedRecord(null);
+    setDetailStore(null);
+    setScreen("Home");
+  }, [user?.id]);
 
   const placeholderCover =
     "https://upload.wikimedia.org/wikipedia/commons/3/3c/No-album-art.png";

@@ -74,6 +74,19 @@ export interface AuthResponse {
   session?: Session | null;
 }
 
+function logAuthError(operation: string, error: unknown): void {
+  if (!__DEV__) {
+    return;
+  }
+
+  if (error && typeof error === "object") {
+    console.warn(`[RecordQuest][auth] ${operation} failed`, error);
+    return;
+  }
+
+  console.warn(`[RecordQuest][auth] ${operation} failed`, error);
+}
+
 /**
  * PLACEHOLDER: Sign up with email and password
  * 
@@ -103,6 +116,7 @@ export async function signUpWithEmail(
     });
 
     if (error) {
+      logAuthError("signUp", error);
       return { success: false, error: error.message };
     }
 
@@ -112,6 +126,7 @@ export async function signUpWithEmail(
       session: data.session,
     };
   } catch (err: unknown) {
+    logAuthError("signUp", err);
     return {
       success: false,
       error: err instanceof Error ? err.message : "Unknown signup error",
@@ -149,6 +164,7 @@ export async function signInWithEmail(
     });
 
     if (error) {
+      logAuthError("signIn", error);
       return { success: false, error: error.message };
     }
 
@@ -158,6 +174,7 @@ export async function signInWithEmail(
       session: data.session,
     };
   } catch (err: unknown) {
+    logAuthError("signIn", err);
     return {
       success: false,
       error: err instanceof Error ? err.message : "Unknown signin error",
@@ -186,11 +203,13 @@ export async function signOut(): Promise<AuthResponse> {
     const { error } = await supabase.auth.signOut({ scope: "local" });
 
     if (error) {
+      logAuthError("signOut", error);
       return { success: false, error: error.message };
     }
 
     return { success: true };
   } catch (err: unknown) {
+    logAuthError("signOut", err);
     return {
       success: false,
       error: err instanceof Error ? err.message : "Unknown signout error",
@@ -218,13 +237,13 @@ export async function getCurrentSession(): Promise<Session | null> {
     const { data, error } = await supabase.auth.getSession();
 
     if (error) {
-      console.error("Error getting session:", error.message);
+      logAuthError("getSession", error);
       return null;
     }
 
     return data.session;
   } catch (err: unknown) {
-    console.error("Error getting session:", err);
+    logAuthError("getSession", err);
     return null;
   }
 }

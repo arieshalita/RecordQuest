@@ -52,23 +52,34 @@ export default function CreateAccountScreen() {
     setEmail(normalizedEmail);
 
     setIsSubmitting(true);
-    const result = await signUp(normalizedEmail, trimmedPassword);
-    setIsSubmitting(false);
+    try {
+      const result = await signUp(normalizedEmail, trimmedPassword);
 
-    if (!result.success) {
-      setError(mapSignUpErrorMessage(result.error));
-      return;
+      if (!result.success) {
+        setError(mapSignUpErrorMessage(result.error));
+        return;
+      }
+
+      if (result.session) {
+        router.replace("/(tabs)");
+        return;
+      }
+
+      setSuccessMessage(
+        "Account created. Check your email to verify your account, then sign in."
+      );
+    } finally {
+      setIsSubmitting(false);
     }
-
-    if (result.session) {
-      router.replace("/(tabs)");
-      return;
-    }
-
-    setSuccessMessage(
-      "Account created. Check your email to verify your account, then sign in."
-    );
   }
+
+  const normalizedEmail = normalizeEmail(email);
+  const trimmedPassword = password.trim();
+  const trimmedConfirmPassword = confirmPassword.trim();
+  const canSubmit =
+    isValidEmail(normalizedEmail) &&
+    trimmedPassword.length >= 8 &&
+    trimmedPassword === trimmedConfirmPassword;
 
   return (
     <AuthScreenShell
@@ -124,9 +135,9 @@ export default function CreateAccountScreen() {
       {successMessage ? <Text style={styles.successText}>{successMessage}</Text> : null}
 
       <Pressable
-        style={[styles.primaryButton, isSubmitting ? styles.disabledButton : null]}
+        style={[styles.primaryButton, (isSubmitting || !canSubmit) ? styles.disabledButton : null]}
         onPress={handleCreateAccount}
-        disabled={isSubmitting}
+        disabled={isSubmitting || !canSubmit}
       >
         {isSubmitting ? (
           <ActivityIndicator color="#FFF4D6" />
