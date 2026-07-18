@@ -86,63 +86,182 @@ const FEATURE_TILES: FeatureTile[] = [
 ];
 
 function CollectionAnalyticsDashboard({ analytics }: { analytics: CollectionAnalytics }) {
-  const overviewCards = [
-    { value: analytics.totalArtists, label: "Unique artists", icon: "🎤" },
-    { value: analytics.mostCollectedArtist?.artist ?? null, label: analytics.mostCollectedArtist ? `Top artist (${analytics.mostCollectedArtist.count})` : "Top artist", icon: "💿" },
-    { value: analytics.favoriteGenre?.genre ?? null, label: analytics.favoriteGenre ? `Top genre (${analytics.favoriteGenre.count})` : "Top genre", icon: "🎵" },
-    { value: analytics.favoriteDecade?.decade ?? null, label: analytics.favoriteDecade ? `Favorite decade (${analytics.favoriteDecade.count})` : "Favorite decade", icon: "📼" },
-  ].filter((item) => item.value !== null);
+  function formatCurrency(value: number): string {
+    return `$${value.toFixed(2)}`;
+  }
 
-  const collectionCards = [
-    { value: analytics.oldestAlbum?.year ?? null, label: analytics.oldestAlbum ? `Oldest release · ${analytics.oldestAlbum.album}` : "Oldest release", icon: "🏛️" },
-    { value: analytics.newestAlbum?.year ?? null, label: analytics.newestAlbum ? `Newest release · ${analytics.newestAlbum.album}` : "Newest release", icon: "✨" },
-    { value: analytics.averageRating > 0 ? analytics.averageRating : null, label: "Average rating", icon: "⭐" },
-    { value: analytics.highestRatedRecord?.album ?? null, label: analytics.highestRatedRecord?.rating ? `Highest rated · ${analytics.highestRatedRecord.rating}/5` : "Highest rated", icon: "🏆" },
-  ].filter((item) => item.value !== null);
+  function renderRankedList(title: string, rows: Array<{ label: string; count: number }>) {
+    return (
+      <View style={styles.analyticsListCard}>
+        <Text style={styles.analyticsListTitle}>{title}</Text>
+        {rows.length === 0 ? (
+          <Text style={styles.analyticsListEmptyText}>Not enough data yet</Text>
+        ) : (
+          rows.map((row, index) => (
+            <View key={`${title}-${row.label}`} style={styles.analyticsListRow}>
+              <Text style={styles.analyticsListLabel}>{`${index + 1}. ${row.label}`}</Text>
+              <Text style={styles.analyticsListValue}>{row.count}</Text>
+            </View>
+          ))
+        )}
+      </View>
+    );
+  }
+
+  function renderDistributionCard(
+    title: string,
+    rows: Array<{ label: string; count: number; percent: number }>,
+    unitLabel: string
+  ) {
+    return (
+      <View style={styles.analyticsListCard}>
+        <Text style={styles.analyticsListTitle}>{title}</Text>
+        {rows.length === 0 ? (
+          <Text style={styles.analyticsListEmptyText}>Not enough data yet</Text>
+        ) : (
+          rows.map((row) => (
+            <View key={`${title}-${row.label}`} style={styles.distributionRowWrap}>
+              <View style={styles.distributionHeaderRow}>
+                <Text style={styles.distributionLabel}>{row.label}</Text>
+                <Text style={styles.distributionValue}>{`${row.count} ${unitLabel} · ${row.percent}%`}</Text>
+              </View>
+              <View style={styles.distributionTrack}>
+                <View style={[styles.distributionFill, { width: `${Math.max(6, row.percent)}%` }]} />
+              </View>
+            </View>
+          ))
+        )}
+      </View>
+    );
+  }
+
+  const overviewCards = [
+    { value: analytics.totalRecords, label: "Total records", icon: "📚" },
+    { value: analytics.totalArtists, label: "Unique artists", icon: "🎤" },
+    { value: analytics.totalGenres, label: "Unique genres", icon: "🎵" },
+    { value: analytics.collectorProfileLabel, label: "Collector profile", icon: "🧭" },
+    { value: analytics.ratedRecordsCount > 0 ? analytics.averageRating : "-", label: `Average rating (${analytics.ratedRecordsCount} rated)`, icon: "⭐" },
+    { value: analytics.recordsAddedThisYear, label: "Added this year", icon: "📅" },
+    { value: analytics.recordsAddedThisMonth, label: "Added this month", icon: "🗓️" },
+    { value: analytics.favoriteDecade?.decade ?? "-", label: analytics.favoriteDecade ? `Most collected decade (${analytics.favoriteDecade.count})` : "Most collected decade", icon: "📼" },
+  ];
+
+  const spendingCards = [
+    { value: analytics.totalSpent > 0 ? formatCurrency(analytics.totalSpent) : "-", label: "Total spent", icon: "💸" },
+    { value: analytics.averagePurchasePrice > 0 ? formatCurrency(analytics.averagePurchasePrice) : "-", label: "Average purchase price", icon: "🧾" },
+    { value: analytics.medianPurchasePrice > 0 ? formatCurrency(analytics.medianPurchasePrice) : "-", label: "Median purchase price", icon: "📐" },
+    {
+      value: analytics.highestPricedRecord ? formatCurrency(analytics.highestPricedRecord.price) : "-",
+      label: analytics.highestPricedRecord ? `Highest price · ${analytics.highestPricedRecord.album}` : "Highest price",
+      icon: "💎",
+    },
+  ];
 
   const activityCards = [
-    { value: analytics.recordsAddedThisYear > 0 ? analytics.recordsAddedThisYear : null, label: "Added this year", icon: "📅" },
-    { value: analytics.recordsAddedThisMonth > 0 ? analytics.recordsAddedThisMonth : null, label: "Added this month", icon: "🗓️" },
-    { value: analytics.mostActiveCollectingMonth?.label ?? null, label: analytics.mostActiveCollectingMonth ? `Most active month (${analytics.mostActiveCollectingMonth.count})` : "Most active month", icon: "🔥" },
-    { value: analytics.mostRecentAddition?.album ?? null, label: analytics.mostRecentAddition?.artist ? `Most recent addition · ${analytics.mostRecentAddition.artist}` : "Most recent addition", icon: "🆕" },
-  ].filter((item) => item.value !== null);
+    {
+      value: analytics.mostRecentAddition?.album ?? "-",
+      label: analytics.mostRecentAddition?.artist ? `Latest addition · ${analytics.mostRecentAddition.artist}` : "Latest addition",
+      icon: "🆕",
+    },
+    {
+      value: analytics.mostActiveCollectingMonth?.label ?? "-",
+      label: analytics.mostActiveCollectingMonth ? `Most active month (${analytics.mostActiveCollectingMonth.count})` : "Most active month",
+      icon: "🔥",
+    },
+    {
+      value:
+        analytics.averageRecordsAddedPerMonth !== null
+          ? analytics.averageRecordsAddedPerMonth
+          : "-",
+      label:
+        analytics.averageRecordsAddedPerMonth !== null
+          ? "Average added per month"
+          : "Average added per month",
+      icon: "📈",
+    },
+    {
+      value:
+        analytics.longestMonthlyCollectingStreak !== null
+          ? `${analytics.longestMonthlyCollectingStreak} mo`
+          : "-",
+      label:
+        analytics.longestMonthlyCollectingStreak !== null
+          ? "Longest monthly streak"
+          : "Longest monthly streak",
+      icon: "⛳",
+    },
+  ];
 
   return (
     <View>
-      <Text style={styles.sectionTitle}>Collection Highlights</Text>
+      <Text style={styles.sectionTitle}>Collection Overview</Text>
 
-      {overviewCards.length > 0 ? (
-        <>
-          <AnalyticsSectionHeader title="Overview" icon="💿" />
-          <View style={styles.analyticsGrid}>
-            {overviewCards.map((card) => (
-              <AnalyticsCard key={card.label} value={card.value as string | number} label={card.label} icon={card.icon} />
-            ))}
-          </View>
-        </>
-      ) : null}
+      <View style={styles.analyticsGrid}>
+        {overviewCards.map((card) => (
+          <AnalyticsCard key={card.label} value={card.value} label={card.label} icon={card.icon} />
+        ))}
+      </View>
 
-      {collectionCards.length > 0 ? (
-        <>
-          <AnalyticsSectionHeader title="Collection" icon="📚" />
-          <View style={styles.analyticsGrid}>
-            {collectionCards.map((card) => (
-              <AnalyticsCard key={card.label} value={card.value as string | number} label={card.label} icon={card.icon} />
-            ))}
-          </View>
-        </>
-      ) : null}
+      <AnalyticsSectionHeader title="Taste" icon="🎚️" />
+      {renderRankedList("Top 3 artists", analytics.topArtists)}
+      {renderDistributionCard("Decade distribution (Top 3)", analytics.decadeDistribution, "records")}
 
-      {activityCards.length > 0 ? (
-        <>
-          <AnalyticsSectionHeader title="Activity" icon="⚡" />
-          <View style={styles.analyticsGrid}>
-            {activityCards.map((card) => (
-              <AnalyticsCard key={card.label} value={card.value as string | number} label={card.label} icon={card.icon} />
-            ))}
-          </View>
-        </>
-      ) : null}
+      <View style={styles.analyticsInlineCallout}>
+        <Text style={styles.analyticsInlineTitle}>Average release year</Text>
+        <Text style={styles.analyticsInlineValue}>
+          {analytics.averageYear > 0 ? String(analytics.averageYear) : "Not enough data yet"}
+        </Text>
+        <Text style={styles.analyticsInlineSubtext}>
+          {analytics.highestRatedArtist
+            ? `Highest-rated artist: ${analytics.highestRatedArtist.artist} (${analytics.highestRatedArtist.averageRating}/5 across ${analytics.highestRatedArtist.count})`
+            : "Highest-rated artist appears after at least 2 rated records for the same artist."}
+        </Text>
+      </View>
+
+      <AnalyticsSectionHeader title="Spending" icon="💰" />
+      <View style={styles.analyticsGrid}>
+        {spendingCards.map((card) => (
+          <AnalyticsCard key={card.label} value={card.value} label={card.label} icon={card.icon} />
+        ))}
+      </View>
+
+      <View style={styles.analyticsInlineCallout}>
+        <Text style={styles.analyticsInlineTitle}>Price extremes</Text>
+        <Text style={styles.analyticsInlineSubtext}>
+          {analytics.lowestPricedRecord
+            ? `Lowest: ${analytics.lowestPricedRecord.album} (${formatCurrency(analytics.lowestPricedRecord.price)})`
+            : "Lowest: Not enough data yet"}
+        </Text>
+        <Text style={styles.analyticsInlineSubtext}>
+          {analytics.bestBargainRecord
+            ? `Best bargain: ${analytics.bestBargainRecord.album} (${analytics.bestBargainRecord.rating}/5 at ${formatCurrency(analytics.bestBargainRecord.price)})`
+            : "Best bargain needs both rating and price data."}
+        </Text>
+      </View>
+
+      <AnalyticsSectionHeader title="Collecting Activity" icon="⚡" />
+      <View style={styles.analyticsGrid}>
+        {activityCards.map((card) => (
+          <AnalyticsCard key={card.label} value={card.value} label={card.label} icon={card.icon} />
+        ))}
+      </View>
+
+      {renderDistributionCard(
+        "Collection growth (last 6 months)",
+        analytics.collectionGrowthLastMonths.map((entry) => ({
+          label: entry.label,
+          count: entry.count,
+          percent: analytics.totalRecords > 0 ? Math.round((entry.count / analytics.totalRecords) * 100) : 0,
+        })),
+        "adds"
+      )}
+
+      <AnalyticsSectionHeader title="Collection Details" icon="🧱" />
+      {renderDistributionCard("Rating distribution (1-5)", analytics.ratingDistribution.map((entry) => ({
+        label: `${entry.rating}★`,
+        count: entry.count,
+        percent: entry.percent,
+      })), "records")}
 
       {analytics.averageRating <= 0 ? (
         <View style={styles.insightHintCard}>
@@ -1235,6 +1354,102 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 12,
     marginBottom: 24,
+  },
+  analyticsListCard: {
+    marginTop: -4,
+    marginBottom: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.22)",
+    backgroundColor: "rgba(18, 16, 34, 0.90)",
+    padding: 12,
+  },
+  analyticsListTitle: {
+    color: "#F8EED4",
+    fontSize: 13,
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  analyticsListEmptyText: {
+    color: "#A7A1BD",
+    fontSize: 12,
+  },
+  analyticsListRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(248, 238, 220, 0.08)",
+  },
+  analyticsListLabel: {
+    color: "#E6D8B8",
+    fontSize: 12,
+    fontWeight: "600",
+    flex: 1,
+    paddingRight: 8,
+  },
+  analyticsListValue: {
+    color: "#C4BEE0",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  distributionRowWrap: {
+    marginBottom: 8,
+  },
+  distributionHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  distributionLabel: {
+    color: "#E6D8B8",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  distributionValue: {
+    color: "#A7A1BD",
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  distributionTrack: {
+    height: 8,
+    borderRadius: 999,
+    overflow: "hidden",
+    backgroundColor: "rgba(124, 58, 237, 0.16)",
+  },
+  distributionFill: {
+    height: "100%",
+    borderRadius: 999,
+    backgroundColor: "rgba(167, 139, 250, 0.9)",
+  },
+  analyticsInlineCallout: {
+    marginTop: -8,
+    marginBottom: 18,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.10)",
+    backgroundColor: "rgba(15, 17, 24, 0.92)",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  analyticsInlineTitle: {
+    color: "#F8EED4",
+    fontSize: 13,
+    fontWeight: "700",
+    marginBottom: 5,
+  },
+  analyticsInlineValue: {
+    color: "#E9D8B4",
+    fontSize: 12,
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  analyticsInlineSubtext: {
+    color: "#BFB8D2",
+    fontSize: 12,
+    lineHeight: 18,
   },
   insightHintCard: {
     marginTop: -8,

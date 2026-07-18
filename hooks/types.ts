@@ -61,6 +61,7 @@ export type AlbumSearchResult = {
 };
 
 export type CollectionAnalytics = {
+  totalRecords: number;
   totalArtists: number;
   totalGenres: number;
   averageYear: number;
@@ -69,12 +70,25 @@ export type CollectionAnalytics = {
   mostCollectedArtist: { artist: string; count: number } | null;
   favoriteGenre: { genre: string; count: number } | null;
   favoriteDecade: { decade: string; count: number } | null;
-  albumsWithStore: number;
+  topArtists: Array<{ label: string; count: number }>;
+  decadeDistribution: Array<{ label: string; count: number; percent: number }>;
+  highestRatedArtist: { artist: string; averageRating: number; count: number } | null;
   albumsWithStory: number;
   averageRating: number;
+  ratedRecordsCount: number;
+  ratingDistribution: Array<{ rating: number; count: number; percent: number }>;
   highestRatedRecord: RecordItem | null;
+  totalSpent: number;
+  averagePurchasePrice: number;
+  medianPurchasePrice: number;
+  highestPricedRecord: { album: string; artist: string; price: number } | null;
+  lowestPricedRecord: { album: string; artist: string; price: number } | null;
+  bestBargainRecord: { album: string; artist: string; price: number; rating: number } | null;
   recordsAddedThisMonth: number;
   recordsAddedThisYear: number;
+  collectionGrowthLastMonths: Array<{ label: string; count: number }>;
+  averageRecordsAddedPerMonth: number | null;
+  longestMonthlyCollectingStreak: number | null;
   mostActiveCollectingMonth: { label: string; count: number } | null;
   mostRecentAddition: RecordItem | null;
   firstRecordedAddition: RecordItem | null;
@@ -86,4 +100,5 @@ export type CollectionAnalytics = {
   wishlistCount: number;
   wishlistCompletionPercent: number;
   mostRecentAlbum: RecordItem | null;
+  collectorProfileLabel: "Starter" | "Crate Digger" | "Collector" | "Archivist" | "Vinyl Vault";
 };
