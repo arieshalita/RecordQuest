@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import { router } from "expo-router";
 import { AuthScreenShell } from "../../components/auth/AuthScreenShell";
-import { supabase } from "../../hooks/supabase-client";
+import { getAuthRedirectUrl, supabase } from "../../hooks/supabase-client";
 import { isValidEmail, mapPasswordResetErrorMessage, normalizeEmail } from "../../utils/auth-input";
 
 export default function ForgotPasswordScreen() {
@@ -37,17 +37,23 @@ export default function ForgotPasswordScreen() {
     setEmail(normalizedEmail);
 
     setIsSubmitting(true);
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(
-      normalizedEmail
-    );
-    setIsSubmitting(false);
+    try {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+        normalizedEmail,
+        {
+          redirectTo: getAuthRedirectUrl("auth/callback"),
+        }
+      );
 
-    if (resetError) {
-      setError(mapPasswordResetErrorMessage(resetError.message));
-      return;
+      if (resetError) {
+        setError(mapPasswordResetErrorMessage(resetError.message));
+        return;
+      }
+
+      setMessage("Password reset email sent. Check your inbox.");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setMessage("Password reset email sent. Check your inbox.");
   }
 
   return (

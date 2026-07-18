@@ -33,6 +33,7 @@ import {
   type User,
 } from "@supabase/supabase-js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Linking from "expo-linking";
 
 // Read environment variables with Expo public prefix
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -74,6 +75,10 @@ export interface AuthResponse {
   session?: Session | null;
 }
 
+export function getAuthRedirectUrl(path = "auth/callback"): string {
+  return Linking.createURL(path, { scheme: "recordquest" });
+}
+
 function logAuthError(operation: string, error: unknown): void {
   if (!__DEV__) {
     return;
@@ -113,6 +118,9 @@ export async function signUpWithEmail(
     const { data, error } = await supabase.auth.signUp({
       email: email.trim(),
       password,
+      options: {
+        emailRedirectTo: getAuthRedirectUrl("auth/callback"),
+      },
     });
 
     if (error) {
