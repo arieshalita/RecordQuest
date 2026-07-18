@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { AlbumArt } from "../components/AlbumArt";
 import { TopBar } from "../components/TopBar";
 import {
   loadPublicCollectionPreview,
   type PublicRecordPreview,
 } from "../hooks/public-collection-preview";
-import { getFallbackAlbumArtUrl, resolveAlbumArtUrl } from "../utils/album-art";
 
 type PublicCollectionScreenProps = {
   viewedUserId: string;
@@ -18,7 +18,6 @@ export function PublicCollectionScreen({ viewedUserId, viewedDisplayName, onBack
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [brokenCoverIds, setBrokenCoverIds] = useState<Set<number>>(new Set());
 
   const loadCollection = useCallback(
     async (refresh = false) => {
@@ -45,7 +44,6 @@ export function PublicCollectionScreen({ viewedUserId, viewedDisplayName, onBack
         setErrorMessage(result.error);
       } else {
         setRecords(result.records);
-        setBrokenCoverIds(new Set());
       }
 
       setIsLoading(false);
@@ -120,25 +118,7 @@ export function PublicCollectionScreen({ viewedUserId, viewedDisplayName, onBack
           }
           renderItem={({ item }) => (
             <View style={styles.recordCard}>
-              <Image
-                source={{
-                  uri: brokenCoverIds.has(item.id)
-                    ? getFallbackAlbumArtUrl()
-                    : resolveAlbumArtUrl(item.cover, "thumb"),
-                }}
-                style={styles.recordCover}
-                onError={() => {
-                  setBrokenCoverIds((current) => {
-                    if (current.has(item.id)) {
-                      return current;
-                    }
-
-                    const next = new Set(current);
-                    next.add(item.id);
-                    return next;
-                  });
-                }}
-              />
+              <AlbumArt uri={item.cover} style={styles.recordCover} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.recordAlbum}>{item.album}</Text>
                 <Text style={styles.recordArtist}>{item.artist}</Text>

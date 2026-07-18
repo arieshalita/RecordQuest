@@ -1,5 +1,6 @@
 import React from "react";
-import { ScrollView, Text, View, Pressable, TextInput, Image, StyleSheet } from "react-native";
+import { ScrollView, Text, View, Pressable, TextInput, StyleSheet } from "react-native";
+import { AlbumArt } from "../components/AlbumArt";
 import { TopBar } from "../components/TopBar";
 import type { RecordItem } from "../hooks/types";
 
@@ -63,7 +64,7 @@ export function AlbumDetailScreen({
     <ScrollView contentContainerStyle={styles.page}>
       <TopBar title="Collector Journal" back={closeRecordDetail} />
       <View style={styles.detailCard}>
-        <Image source={{ uri: selectedRecord.cover }} style={styles.detailCover} />
+        <AlbumArt uri={selectedRecord.cover} hint="detail" style={styles.detailCover} />
         <Text style={styles.detailTitle}>{selectedRecord.album}</Text>
         <Text style={styles.detailArtist}>{selectedRecord.artist}</Text>
         <View style={styles.metaRow}>

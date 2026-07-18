@@ -2,14 +2,21 @@ const FALLBACK_ALBUM_ART_URL = "https://upload.wikimedia.org/wikipedia/commons/3
 
 type AlbumArtSizeHint = "thumb" | "detail";
 
-function appendDimension(url: string, hint: AlbumArtSizeHint): string {
-  if (url.includes("coverartarchive.org") && !url.includes("-250")) {
-    if (hint === "thumb") {
-      return `${url}-250`;
-    }
-  }
+function normalizeAlbumArtUrl(rawUrl: string): string {
+  const withProtocol = rawUrl.startsWith("//") ? `https:${rawUrl}` : rawUrl;
+  const upgradedToHttps = withProtocol.startsWith("http://") ? `https://${withProtocol.slice("http://".length)}` : withProtocol;
 
-  return url;
+  try {
+    const parsed = new URL(upgradedToHttps);
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return "";
+    }
+
+    return parsed.href;
+  } catch {
+    return "";
+  }
 }
 
 export function resolveAlbumArtUrl(rawUrl: string | null | undefined, hint: AlbumArtSizeHint = "thumb"): string {
@@ -19,7 +26,12 @@ export function resolveAlbumArtUrl(rawUrl: string | null | undefined, hint: Albu
     return FALLBACK_ALBUM_ART_URL;
   }
 
-  return appendDimension(trimmed, hint);
+  const normalized = normalizeAlbumArtUrl(trimmed);
+  if (!normalized) {
+    return FALLBACK_ALBUM_ART_URL;
+  }
+
+  return normalized;
 }
 
 export function getFallbackAlbumArtUrl(): string {

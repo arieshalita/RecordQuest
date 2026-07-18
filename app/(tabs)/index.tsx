@@ -7,13 +7,13 @@ import {
   View,
   Pressable,
   TextInput,
-  Image,
   ScrollView,
   ActivityIndicator,
   Linking,
   Platform,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { AlbumArt } from "../../components/AlbumArt";
 import {
   loadRecordQuestState,
   saveRecordQuestState,
@@ -1197,7 +1197,7 @@ export default function App() {
                     <Text style={styles.followingActivityEntry}>{formatFollowingEntry(item.entry)}</Text>
                     {item.album || item.artist || item.cover ? (
                       <View style={styles.followingActivityMediaRow}>
-                        {item.cover ? <Image source={{ uri: item.cover }} style={styles.followingActivityCover} /> : null}
+                        {item.cover ? <AlbumArt uri={item.cover} style={styles.followingActivityCover} /> : null}
                         <View style={styles.followingActivityMetaWrap}>
                           {item.album ? <Text style={styles.followingActivityAlbum}>{item.album}</Text> : null}
                           {item.artist ? <Text style={styles.followingActivityArtist}>{item.artist}</Text> : null}

@@ -5,10 +5,10 @@ import {
   View,
   Pressable,
   TextInput,
-  Image,
   ActivityIndicator,
   StyleSheet,
 } from "react-native";
+import { AlbumArt } from "../components/AlbumArt";
 import { TopBar } from "../components/TopBar";
 import type { RecordItem, AlbumSearchResult } from "../hooks/types";
 
@@ -100,12 +100,7 @@ export function WishlistScreen({
                 style={styles.resultCard}
                 onPress={() => onSelectResult(result)}
               >
-                <Image
-                  source={{
-                    uri: result.cover || "https://upload.wikimedia.org/wikipedia/commons/3/3c/No-album-art.png",
-                  }}
-                  style={styles.resultCover}
-                />
+                <AlbumArt uri={result.cover} style={styles.resultCover} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.resultTitle}>{result.album}</Text>
                   <Text style={styles.resultArtist}>{result.artist}</Text>
@@ -133,7 +128,7 @@ export function WishlistScreen({
           <View key={record.id} style={styles.recordCard}>
             <Pressable style={{ flex: 1 }} onPress={() => onViewRecord?.(record)}>
               <View style={styles.cardInfo}>
-                <Image source={{ uri: record.cover }} style={styles.cover} />
+                <AlbumArt uri={record.cover} style={styles.cover} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.albumTitle}>{record.album}</Text>
                   <Text style={styles.artistName}>{record.artist}</Text>

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ScrollView, Text, View, StyleSheet, Pressable, TextInput, Image, Modal } from "react-native";
+import { ScrollView, Text, View, StyleSheet, Pressable, TextInput, Modal } from "react-native";
+import { AlbumArt } from "../components/AlbumArt";
 import { TopBar } from "../components/TopBar";
 import { StatCard } from "../components/StatCard";
 import { AnalyticsCard } from "../components/AnalyticsCard";
@@ -25,7 +26,6 @@ import {
   loadPublicCollectionPreview,
   type PublicRecordPreview,
 } from "../hooks/public-collection-preview";
-import { getFallbackAlbumArtUrl, resolveAlbumArtUrl } from "../utils/album-art";
 
 type ProfileScreenProps = {
   records: RecordItem[];
@@ -196,9 +196,7 @@ export function ProfileScreen({
   const [isPublicCollectionLoading, setIsPublicCollectionLoading] = useState(false);
   const [publicCollectionError, setPublicCollectionError] = useState<string | null>(null);
   const [publicCollectionCount, setPublicCollectionCount] = useState(0);
-  const [brokenPublicRecordCoverIds, setBrokenPublicRecordCoverIds] = useState<Set<number>>(new Set());
   const [selectedPublicRecord, setSelectedPublicRecord] = useState<PublicRecordPreview | null>(null);
-  const [selectedPublicRecordCoverBroken, setSelectedPublicRecordCoverBroken] = useState(false);
   const [selectedFeatureTile, setSelectedFeatureTile] = useState<FeatureTile | null>(null);
   const [showInsights, setShowInsights] = useState(false);
   const saveIdentityInFlightRef = useRef(false);
@@ -377,7 +375,6 @@ export function ProfileScreen({
 
       setPublicCollectionRecords(result.records);
       setPublicCollectionCount(countResult.count);
-      setBrokenPublicRecordCoverIds(new Set());
       setPublicCollectionError(result.error ?? countResult.error ?? null);
       setIsPublicCollectionLoading(false);
     }
@@ -394,10 +391,6 @@ export function ProfileScreen({
       setSelectedPublicRecord(null);
     }
   }, [isOwnProfile]);
-
-  useEffect(() => {
-    setSelectedPublicRecordCoverBroken(false);
-  }, [selectedPublicRecord?.id]);
 
   async function onToggleFollow() {
     if (!targetUserId || isOwnProfile || isFollowActionLoading) {
@@ -834,25 +827,7 @@ export function ProfileScreen({
                   onPress={() => setSelectedPublicRecord(record)}
                 >
                   <View style={styles.publicRecordInfo}>
-                    <Image
-                      source={{
-                        uri: brokenPublicRecordCoverIds.has(record.id)
-                          ? getFallbackAlbumArtUrl()
-                          : resolveAlbumArtUrl(record.cover, "thumb"),
-                      }}
-                      style={styles.publicRecordCover}
-                      onError={() => {
-                        setBrokenPublicRecordCoverIds((current) => {
-                          if (current.has(record.id)) {
-                            return current;
-                          }
-
-                          const next = new Set(current);
-                          next.add(record.id);
-                          return next;
-                        });
-                      }}
-                    />
+                    <AlbumArt uri={record.cover} style={styles.publicRecordCover} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.publicRecordAlbum}>{record.album}</Text>
                       <Text style={styles.publicRecordArtist}>{record.artist}</Text>
@@ -905,15 +880,7 @@ export function ProfileScreen({
           {selectedPublicRecord ? (
             <>
               <Text style={styles.publicDetailKicker}>From {resolvedProfileName}&apos;s Collection</Text>
-              <Image
-                source={{
-                  uri: selectedPublicRecordCoverBroken
-                    ? getFallbackAlbumArtUrl()
-                    : resolveAlbumArtUrl(selectedPublicRecord.cover, "detail"),
-                }}
-                style={styles.publicDetailCover}
-                onError={() => setSelectedPublicRecordCoverBroken(true)}
-              />
+              <AlbumArt uri={selectedPublicRecord.cover} hint="detail" style={styles.publicDetailCover} />
               <Text style={styles.publicDetailAlbum}>{selectedPublicRecord.album}</Text>
               <Text style={styles.publicDetailArtist}>{selectedPublicRecord.artist}</Text>
               {selectedPublicRecord.year ? (

@@ -6,7 +6,6 @@ import {
   View,
   Pressable,
   TextInput,
-  Image,
   ActivityIndicator,
   StyleSheet,
   Modal,
@@ -17,6 +16,7 @@ import {
   Keyboard,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { AlbumArt } from "../components/AlbumArt";
 import { TopBar } from "../components/TopBar";
 import { RecordQuestTheme } from "../constants/theme";
 import type { RecordItem, AlbumSearchResult } from "../hooks/types";
@@ -50,8 +50,6 @@ type RecordListScreenProps = {
 type ListSort = "recent" | "artist" | "title" | "year-newest" | "year-oldest";
 type SearchFormatFilter = "all" | "album" | "ep" | "single";
 type SearchResultSort = "relevance" | "year-newest" | "year-oldest";
-
-const DEFAULT_COVER = "https://upload.wikimedia.org/wikipedia/commons/3/3c/No-album-art.png";
 
 function parseYear(value: string | undefined): number | null {
   if (!value) return null;
@@ -325,7 +323,7 @@ export function RecordListScreen({
                 style={({ pressed }) => [styles.resultCard, pressed ? styles.cardPressed : null]}
                 onPress={() => handleSelectResult(item)}
               >
-                <Image source={{ uri: item.cover || DEFAULT_COVER }} style={styles.resultCover} />
+                <AlbumArt uri={item.cover} style={styles.resultCover} />
                 <View style={styles.resultBody}>
                   <Text style={styles.resultTitle} numberOfLines={2}>
                     {item.album}
@@ -405,7 +403,7 @@ export function RecordListScreen({
                 }}
               >
                 <View style={styles.cardInfo}>
-                  <Image source={{ uri: record.cover || DEFAULT_COVER }} style={styles.cover} />
+                  <AlbumArt uri={record.cover} style={styles.cover} />
                   <View style={styles.recordTextWrap}>
                     <Text style={styles.albumTitle} numberOfLines={1}>
                       {record.album}
@@ -711,12 +709,7 @@ export function RecordListScreen({
                         </Pressable>
                       </View>
                       <View style={styles.selectedContentRow}>
-                        <Image
-                          source={{
-                            uri: selectedMetadata.cover || DEFAULT_COVER,
-                          }}
-                          style={styles.selectedCover}
-                        />
+                        <AlbumArt uri={selectedMetadata.cover} style={styles.selectedCover} />
                         <View style={styles.selectedInfoWrap}>
                           <Text style={styles.selectedTitle}>{selectedMetadata.album}</Text>
                           <Text style={styles.selectedArtist}>{selectedMetadata.artist}</Text>
