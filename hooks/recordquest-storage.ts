@@ -16,6 +16,7 @@ import {
   saveWishlist,
 } from "./recordquest-supabase-service";
 import type { RecordItem } from "./types";
+import { normalizeAlbumArtUrlOrNull } from "../utils/album-art";
 
 export type { RecordItem };
 
@@ -83,9 +84,16 @@ async function loadLocalState(initialState: RecordQuestState): Promise<RecordQue
     ? (JSON.parse(savedCheckIns) as Record<string, number>)
     : null;
 
+  function sanitizeRecordItems(items: RecordItem[]): RecordItem[] {
+    return items.map((item) => ({
+      ...item,
+      cover: normalizeAlbumArtUrlOrNull(item.cover) ?? "",
+    }));
+  }
+
   return {
-    records: Array.isArray(parsedRecords) ? parsedRecords : initialState.records,
-    wishlist: Array.isArray(parsedWishlist) ? parsedWishlist : initialState.wishlist,
+    records: Array.isArray(parsedRecords) ? sanitizeRecordItems(parsedRecords) : sanitizeRecordItems(initialState.records),
+    wishlist: Array.isArray(parsedWishlist) ? sanitizeRecordItems(parsedWishlist) : sanitizeRecordItems(initialState.wishlist),
     activity: Array.isArray(parsedActivity) ? parsedActivity : initialState.activity,
     storeCheckIns:
       parsedCheckIns && typeof parsedCheckIns === "object"
@@ -107,6 +115,13 @@ export async function loadRecordQuestState(initialState: RecordQuestState): Prom
   try {
     const userId = await getAuthenticatedUserId();
 
+    function sanitizeRecordItems(items: RecordItem[]): RecordItem[] {
+      return items.map((item) => ({
+        ...item,
+        cover: normalizeAlbumArtUrlOrNull(item.cover) ?? "",
+      }));
+    }
+
     if (isSupabaseDataModeEnabled() && userId) {
       const [records, wishlist, activity, storeCheckIns] = await Promise.all([
         loadRecords(userId),
@@ -125,8 +140,8 @@ export async function loadRecordQuestState(initialState: RecordQuestState): Prom
       }
 
       return {
-        records,
-        wishlist,
+        records: sanitizeRecordItems(records),
+        wishlist: sanitizeRecordItems(wishlist),
         activity,
         storeCheckIns,
         source: "cloud",
@@ -154,7 +169,19 @@ export async function loadRecordQuestState(initialState: RecordQuestState): Prom
 
 export async function saveRecordQuestState(state: RecordQuestState) {
   try {
-    await saveLocalState(state);
+    const sanitizedState: RecordQuestState = {
+      ...state,
+      records: state.records.map((item) => ({
+        ...item,
+        cover: normalizeAlbumArtUrlOrNull(item.cover) ?? "",
+      })),
+      wishlist: state.wishlist.map((item) => ({
+        ...item,
+        cover: normalizeAlbumArtUrlOrNull(item.cover) ?? "",
+      })),
+    };
+
+    await saveLocalState(sanitizedState);
 
     if (!isSupabaseDataModeEnabled()) {
       return;
@@ -167,10 +194,10 @@ export async function saveRecordQuestState(state: RecordQuestState) {
     }
 
     await Promise.all([
-      saveRecords(userId, state.records),
-      saveWishlist(userId, state.wishlist),
-      saveActivity(userId, state.activity),
-      saveStoreCheckins(userId, state.storeCheckIns),
+      saveRecords(userId, sanitizedState.records),
+      saveWishlist(userId, sanitizedState.wishlist),
+      saveActivity(userId, sanitizedState.activity),
+      saveStoreCheckins(userId, sanitizedState.storeCheckIns),
     ]);
   } catch (error) {
     console.warn("Error saving data:", error);

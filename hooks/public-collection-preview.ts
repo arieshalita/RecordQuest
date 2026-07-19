@@ -1,5 +1,5 @@
 import { supabase } from "./supabase-client";
-import { resolveAlbumArtUrl } from "../utils/album-art";
+import { isValidAlbumArtUrl, normalizeAlbumArtUrlOrNull } from "../utils/album-art";
 
 export type PublicRecordPreview = {
   id: number;
@@ -14,6 +14,9 @@ export type PublicCollectionPreviewResult = {
   records: PublicRecordPreview[];
   blockedByPolicy: boolean;
   error?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  isTransientFailure?: boolean;
 };
 
 export type PublicCollectionCountResult = {
@@ -28,6 +31,20 @@ function readString(value: unknown, fallback = ""): string {
 
 function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function isTransientSupabaseError(code: string | undefined, message: string): boolean {
+  const normalized = message.toLowerCase();
+
+  if (code === "42501" || /permission denied|policy/i.test(normalized)) {
+    return false;
+  }
+
+  if (code && /^5\d\d$/.test(code)) {
+    return true;
+  }
+
+  return /network|timeout|timed out|failed to fetch|temporar|unavailable|connection/i.test(normalized);
 }
 
 export async function loadPublicCollectionPreview(
@@ -49,6 +66,7 @@ export async function loadPublicCollectionPreview(
 
   if (error) {
     const blockedByPolicy = error.code === "42501" || /permission denied|policy/i.test(error.message);
+    const transientFailure = isTransientSupabaseError(error.code, error.message);
 
     return {
       records: [],
@@ -56,6 +74,9 @@ export async function loadPublicCollectionPreview(
       error: blockedByPolicy
         ? "Public collection preview is currently unavailable."
         : "We couldn't load this collection preview right now.",
+      errorCode: error.code,
+      errorMessage: error.message,
+      isTransientFailure: transientFailure,
     };
   }
 
@@ -73,10 +94,19 @@ export async function loadPublicCollectionPreview(
       id,
       album: readString(row.album, "Untitled Album"),
       artist: readString(row.artist, "Unknown Artist"),
-      cover: resolveAlbumArtUrl(readString(row.cover), "thumb"),
+      cover: normalizeAlbumArtUrlOrNull(readString(row.cover)) ?? "",
       year: readString(row.year) || undefined,
       addedAt: readString(row.added_at) || undefined,
     });
+
+    if (__DEV__) {
+      console.log("[RecordQuest][public-collection] mapped artwork", {
+        recordId: id,
+        hasRawCoverField: Object.prototype.hasOwnProperty.call(row, "cover"),
+        hasRawCoverValue: Boolean(readString(row.cover)),
+        mappedCoverValid: isValidAlbumArtUrl(records[records.length - 1].cover),
+      });
+    }
   }
 
   return {

@@ -45,6 +45,7 @@ type RecordListScreenProps = {
   onRemove?: (record: RecordItem) => void;
   onViewRecord: (record: RecordItem) => void;
   isWishlist?: boolean;
+  recordArtworkSource?: "supabase" | "search-result" | "release-lookup" | "release-group-lookup" | "unknown";
 };
 
 type ListSort = "recent" | "artist" | "title" | "year-newest" | "year-oldest";
@@ -82,6 +83,7 @@ export function RecordListScreen({
   onRemove,
   onViewRecord,
   isWishlist = false,
+  recordArtworkSource = "unknown",
 }: RecordListScreenProps) {
   const insets = useSafeAreaInsets();
   const [libraryQuery, setLibraryQuery] = useState("");
@@ -323,7 +325,15 @@ export function RecordListScreen({
                 style={({ pressed }) => [styles.resultCard, pressed ? styles.cardPressed : null]}
                 onPress={() => handleSelectResult(item)}
               >
-                <AlbumArt uri={item.cover} style={styles.resultCover} />
+                <AlbumArt
+                  uri={item.cover}
+                  style={styles.resultCover}
+                  debugScreen={isWishlist ? "wishlist" : "owner-collection"}
+                  debugRecordId={item.id}
+                  debugAlbum={item.album}
+                  debugArtist={item.artist}
+                  debugUriSource="search-result"
+                />
                 <View style={styles.resultBody}>
                   <Text style={styles.resultTitle} numberOfLines={2}>
                     {item.album}
@@ -403,7 +413,15 @@ export function RecordListScreen({
                 }}
               >
                 <View style={styles.cardInfo}>
-                  <AlbumArt uri={record.cover} style={styles.cover} />
+                  <AlbumArt
+                    uri={record.cover}
+                    style={styles.cover}
+                    debugScreen={isWishlist ? "wishlist" : "owner-collection"}
+                    debugRecordId={record.id}
+                    debugAlbum={record.album}
+                    debugArtist={record.artist}
+                    debugUriSource={recordArtworkSource}
+                  />
                   <View style={styles.recordTextWrap}>
                     <Text style={styles.albumTitle} numberOfLines={1}>
                       {record.album}
@@ -709,7 +727,15 @@ export function RecordListScreen({
                         </Pressable>
                       </View>
                       <View style={styles.selectedContentRow}>
-                        <AlbumArt uri={selectedMetadata.cover} style={styles.selectedCover} />
+                        <AlbumArt
+                          uri={selectedMetadata.cover}
+                          style={styles.selectedCover}
+                          debugScreen={isWishlist ? "wishlist" : "owner-collection"}
+                          debugRecordId={selectedMetadata.id}
+                          debugAlbum={selectedMetadata.album}
+                          debugArtist={selectedMetadata.artist}
+                          debugUriSource="search-result"
+                        />
                         <View style={styles.selectedInfoWrap}>
                           <Text style={styles.selectedTitle}>{selectedMetadata.album}</Text>
                           <Text style={styles.selectedArtist}>{selectedMetadata.artist}</Text>

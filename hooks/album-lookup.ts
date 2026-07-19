@@ -1,20 +1,58 @@
 import { type RecordItem } from "./recordquest-storage";
+import {
+  isEquivalentCoverArtArchiveImage,
+  matchLegacyConstructedCoverArtArchiveUrl,
+  normalizeAlbumArtUrlOrNull,
+  parseCoverArtArchiveArtworkIdentity,
+  type CoverArtArchiveArtworkIdentity,
+  type CoverArtArchiveLegacyKind,
+} from "../utils/album-art";
 
-const MUSICBRAINZ_URL = "https://musicbrainz.org/ws/2/release-group";
-const COVER_ART_URL = "https://coverartarchive.org/release-group";
+const MUSICBRAINZ_RELEASE_URL = "https://musicbrainz.org/ws/2/release";
+const MUSICBRAINZ_RELEASE_GROUP_URL = "https://musicbrainz.org/ws/2/release-group";
+const COVER_ART_RELEASE_GROUP_URL = "https://coverartarchive.org/release-group";
+const COVER_ART_RELEASE_URL = "https://coverartarchive.org/release";
 const SEARCH_CACHE_LIMIT = 40;
+const ARTWORK_REQUEST_TIMEOUT_MS = 7000;
+const NO_ART_CACHE_TTL_MS = 1000 * 60 * 60;
 
 const searchCache = new Map<string, AlbumSearchResult[]>();
-const coverCache = new Map<string, string>();
-const pendingCoverRequests = new Map<string, Promise<string>>();
+
+type ArtworkCacheEntry = {
+  status: "valid" | "no-art";
+  url: string;
+  fallbackUrl: string;
+  expiresAt: number;
+};
+
+type ArtworkResolution = {
+  status: "valid" | "no-art" | "transient-failure" | "malformed-url";
+  url: string;
+  fallbackUrl?: string;
+  metadataEndpoint?: string;
+  path: "preferred" | "release" | "release-group" | "none";
+  attempt: number;
+};
+
+const artworkResolutionCache = new Map<string, ArtworkCacheEntry>();
+const pendingArtworkRequests = new Map<string, Promise<ArtworkResolution>>();
+const pendingLegacyRepairRequests = new Map<string, Promise<LegacyArtworkRepairResult>>();
+const legacyRepairCache = new Map<string, LegacyArtworkRepairResult>();
+const releaseToReleaseGroupCache = new Map<string, string>();
+const pendingReleaseToGroupRequests = new Map<string, Promise<string>>();
+const releaseGroupAlternateReleaseCache = new Map<string, AlternateReleaseCandidate[]>();
+const pendingReleaseGroupAlternateReleaseRequests = new Map<string, Promise<AlternateReleaseCandidate[]>>();
 const pendingSearchRequests = new Map<string, Promise<AlbumSearchResult[]>>();
 
 export type AlbumSearchResult = {
   id: string;
+  releaseId?: string;
+  releaseGroupId?: string;
   album: string;
   artist: string;
   year: string;
   cover: string;
+  coverThumbnail?: string;
   genre: string;
   format?: "album" | "ep" | "single";
 };
@@ -562,63 +600,924 @@ function releaseGroupScore(
   return score;
 }
 
-async function fetchReleaseGroupCover(releaseGroupId: string) {
-  if (!releaseGroupId) {
+function buildArtworkCacheKey(releaseId?: string, releaseGroupId?: string): string {
+  return `r:${releaseId?.trim() ?? ""}|g:${releaseGroupId?.trim() ?? ""}`;
+}
+
+function isTransientHttpStatus(status: number): boolean {
+  return status === 408 || status === 429 || (status >= 500 && status <= 599);
+}
+
+function isTransientNetworkError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+
+  return (
+    message.includes("timeout") ||
+    message.includes("network") ||
+    message.includes("failed to fetch") ||
+    message.includes("abort")
+  );
+}
+
+function isCoverArtMetadataEndpoint(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.toLowerCase().endsWith("coverartarchive.org")) {
+      return false;
+    }
+
+    return /^\/(release|release-group)\/[0-9a-f-]+\/?$/i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeCoverArtCandidate(rawUrl: unknown): string | null {
+  if (typeof rawUrl !== "string") {
+    return null;
+  }
+
+  const normalized = normalizeAlbumArtUrlOrNull(rawUrl);
+  if (!normalized) {
+    return null;
+  }
+
+  if (isCoverArtMetadataEndpoint(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function dedupeUrls(urls: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+
+  for (const value of urls) {
+    if (!value || seen.has(value)) {
+      continue;
+    }
+
+    seen.add(value);
+    deduped.push(value);
+  }
+
+  return deduped;
+}
+
+type CoverArtArchiveImageRow = {
+  front?: boolean;
+  image?: string;
+  release?: string | { id?: string };
+  thumbnails?: Record<string, string | undefined>;
+};
+
+type CoverArtArchivePayload = {
+  images?: CoverArtArchiveImageRow[];
+};
+
+type CoverArtCandidate = {
+  url: string;
+  identity: CoverArtArchiveArtworkIdentity | null;
+  sourceReleaseMbid: string | null;
+  sourceReleaseFieldKind: "string" | "object" | "missing";
+};
+
+type ParsedCoverArtCandidates = {
+  primaryUrl: string;
+  fallbackUrl?: string;
+  candidates: CoverArtCandidate[];
+  sourceReleaseMbid?: string;
+};
+
+type CoverArtLookupResult = {
+  status: "valid" | "no-art" | "transient-failure" | "malformed-url";
+  metadataEndpoint: string;
+  attempt: number;
+  path: "release" | "release-group";
+  primaryUrl: string;
+  fallbackUrl?: string;
+  candidates: CoverArtCandidate[];
+  sourceReleaseMbid?: string;
+};
+
+type MusicBrainzReleaseLookupPayload = {
+  "release-group"?: {
+    id?: string;
+  };
+};
+
+type MusicBrainzGroupReleaseRow = {
+  id?: string;
+  title?: string;
+  status?: string;
+  date?: string;
+  country?: string;
+  "release-group"?: {
+    id?: string;
+    "primary-type"?: string;
+  };
+  "cover-art-archive"?: {
+    front?: boolean;
+  };
+};
+
+type MusicBrainzReleaseBrowsePayload = {
+  releases?: MusicBrainzGroupReleaseRow[];
+};
+
+type AlternateReleaseCandidate = {
+  releaseMbid: string;
+  status: string;
+  date: string;
+  country: string;
+  hasFrontCover: boolean | null;
+  primaryType: string;
+};
+
+function readSourceReleaseMbid(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim().toLowerCase();
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(trimmed)) {
+      return trimmed;
+    }
+  }
+
+  if (value && typeof value === "object") {
+    const record = value as { id?: unknown };
+    if (typeof record.id === "string") {
+      const trimmed = record.id.trim().toLowerCase();
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(trimmed)) {
+        return trimmed;
+      }
+    }
+  }
+
+  return null;
+}
+
+function readSourceReleaseFieldKind(value: unknown): "string" | "object" | "missing" {
+  if (typeof value === "string") {
+    return "string";
+  }
+
+  if (value && typeof value === "object") {
+    return "object";
+  }
+
+  return "missing";
+}
+
+function parseCoverArtUrls(
+  payload: CoverArtArchivePayload,
+  kind: "release" | "release-group",
+  fallbackSourceMbid: string
+): ParsedCoverArtCandidates | null {
+  const images = Array.isArray(payload.images) ? payload.images : [];
+  if (!images.length) {
+    return null;
+  }
+
+  const frontCandidates = images.filter((image) => image.front);
+  const selectedImages = frontCandidates.length ? frontCandidates : images;
+  const dedupedCandidates: CoverArtCandidate[] = [];
+  const seenCandidateKeys = new Set<string>();
+  const seenIdentityKeys = new Set<string>();
+
+  for (const imageRow of selectedImages) {
+    const sourceReleaseFieldKind = readSourceReleaseFieldKind(imageRow.release);
+    const sourceReleaseMbid = readSourceReleaseMbid(imageRow.release) ?? fallbackSourceMbid;
+
+    const thumbnailSmall = sanitizeCoverArtCandidate(imageRow.thumbnails?.small);
+    const thumbnail250 = sanitizeCoverArtCandidate(imageRow.thumbnails?.["250"]);
+    const thumbnail500 = sanitizeCoverArtCandidate(imageRow.thumbnails?.["500"]);
+    const thumbnailLarge = sanitizeCoverArtCandidate(imageRow.thumbnails?.large);
+    const fullImage = sanitizeCoverArtCandidate(imageRow.image);
+
+    const preferredOrder = dedupeUrls([
+      thumbnailSmall,
+      thumbnail250,
+      thumbnail500,
+      thumbnailLarge,
+      fullImage,
+    ]);
+
+    for (const candidateUrl of preferredOrder) {
+      const identity = parseCoverArtArchiveArtworkIdentity(candidateUrl);
+      const candidateKey = `${candidateUrl}::${sourceReleaseMbid}`;
+
+      if (seenCandidateKeys.has(candidateKey)) {
+        continue;
+      }
+
+      if (identity?.imageId) {
+        const identityKey = `${identity.kind}:${identity.mbid}:${identity.imageId}:${sourceReleaseMbid}`;
+        if (seenIdentityKeys.has(identityKey)) {
+          continue;
+        }
+        seenIdentityKeys.add(identityKey);
+      }
+
+      seenCandidateKeys.add(candidateKey);
+      dedupedCandidates.push({
+        url: candidateUrl,
+        identity,
+        sourceReleaseMbid,
+        sourceReleaseFieldKind,
+      });
+    }
+  }
+
+  if (!dedupedCandidates.length) {
+    return null;
+  }
+
+  const firstWithSourceRelease = dedupedCandidates.find((candidate) => candidate.sourceReleaseMbid)?.sourceReleaseMbid;
+
+  return {
+    primaryUrl: dedupedCandidates[0].url,
+    fallbackUrl: dedupedCandidates[1]?.url,
+    candidates: dedupedCandidates,
+    sourceReleaseMbid: firstWithSourceRelease ?? undefined,
+  };
+}
+
+function toArtworkResolution(outcome: CoverArtLookupResult): ArtworkResolution {
+  return {
+    status: outcome.status,
+    url: outcome.primaryUrl,
+    fallbackUrl: outcome.fallbackUrl,
+    metadataEndpoint: outcome.metadataEndpoint,
+    path: outcome.path,
+    attempt: outcome.attempt,
+  };
+}
+
+function toIdentityKey(identity: CoverArtArchiveArtworkIdentity | null): string | null {
+  if (!identity?.imageId) {
+    return null;
+  }
+
+  return `${identity.kind}:${identity.mbid}:${identity.imageId}`;
+}
+
+async function fetchWithTimeout(url: string): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ARTWORK_REQUEST_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "RecordQuest/1.0 (https://recordquest.app)",
+      },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function lookupCoverArtCandidatesById(
+  id: string,
+  kind: "release" | "release-group",
+  maxAttempts = 2
+): Promise<CoverArtLookupResult> {
+  const trimmedId = id.trim();
+  if (!trimmedId) {
+    return {
+      status: "no-art",
+      primaryUrl: "",
+      candidates: [],
+      metadataEndpoint: "",
+      path: kind,
+      attempt: 1,
+    };
+  }
+
+  const endpoint = kind === "release" ? COVER_ART_RELEASE_URL : COVER_ART_RELEASE_GROUP_URL;
+  const metadataEndpoint = `${endpoint}/${trimmedId}`;
+  const requestKey = `${kind}:${trimmedId}`;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const startedAt = Date.now();
+
+    function logTerminalOutcome(outcome: string, extra?: Record<string, unknown>): void {
+      if (!__DEV__) {
+        return;
+      }
+
+      console.log("[RecordQuest][artwork] lookup terminal", {
+        requestKey,
+        stage: kind,
+        mbid: trimmedId,
+        metadataEndpoint,
+        attempt,
+        elapsedMs: Date.now() - startedAt,
+        outcome,
+        ...(extra ?? {}),
+      });
+    }
+
+    if (__DEV__) {
+      console.log("[RecordQuest][artwork] lookup attempt", {
+        stage: kind,
+        requestKey: `${kind}:${trimmedId}`,
+        attempt,
+        id: trimmedId,
+      });
+    }
+
+    try {
+      const response = await fetchWithTimeout(metadataEndpoint);
+
+      if (response.ok) {
+        const payload = (await response.json()) as CoverArtArchivePayload;
+        const parsed = parseCoverArtUrls(payload, kind, trimmedId);
+
+        if (!parsed) {
+          logTerminalOutcome("no-front-images");
+          return {
+            status: "no-art",
+            primaryUrl: "",
+            candidates: [],
+            metadataEndpoint,
+            path: kind,
+            attempt,
+          };
+        }
+
+        if (__DEV__) {
+          console.log("[RecordQuest][artwork] metadata parsed", {
+            stage: kind,
+            id: trimmedId,
+            metadataEndpoint,
+            selectedPrimaryUrl: parsed.primaryUrl,
+            selectedFallbackUrl: parsed.fallbackUrl ?? null,
+            candidateCount: parsed.candidates.length,
+          });
+        }
+
+        logTerminalOutcome("metadata-parsed", {
+          sourceReleaseMbid: parsed.sourceReleaseMbid ?? null,
+          candidateCount: parsed.candidates.length,
+        });
+
+        return {
+          status: "valid",
+          primaryUrl: parsed.primaryUrl,
+          fallbackUrl: parsed.fallbackUrl,
+          candidates: parsed.candidates,
+          sourceReleaseMbid: parsed.sourceReleaseMbid,
+          metadataEndpoint,
+          path: kind,
+          attempt,
+        };
+      }
+
+      if (response.status === 404) {
+        logTerminalOutcome("http-non-success", { status: response.status });
+        return {
+          status: "no-art",
+          primaryUrl: "",
+          candidates: [],
+          metadataEndpoint,
+          path: kind,
+          attempt,
+        };
+      }
+
+      if (isTransientHttpStatus(response.status) && attempt < maxAttempts) {
+        if (__DEV__) {
+          console.log("[RecordQuest][artwork] transient http retry", {
+            requestKey,
+            status: response.status,
+            attempt,
+          });
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 350));
+        continue;
+      }
+
+      logTerminalOutcome("http-non-success", { status: response.status });
+
+      return {
+        status: isTransientHttpStatus(response.status) ? "transient-failure" : "no-art",
+        primaryUrl: "",
+        candidates: [],
+        metadataEndpoint,
+        path: kind,
+        attempt,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      const timeout = message.toLowerCase().includes("abort");
+
+      if (isTransientNetworkError(error) && attempt < maxAttempts) {
+        if (__DEV__) {
+          console.log("[RecordQuest][artwork] transient network retry", {
+            requestKey,
+            attempt,
+            message,
+            timeout,
+          });
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 350));
+        continue;
+      }
+
+      logTerminalOutcome(timeout ? "timeout" : "fetch-exception", {
+        message,
+      });
+
+      return {
+        status: isTransientNetworkError(error) ? "transient-failure" : "no-art",
+        primaryUrl: "",
+        candidates: [],
+        metadataEndpoint,
+        path: kind,
+        attempt,
+      };
+    }
+  }
+
+  if (__DEV__) {
+    console.log("[RecordQuest][artwork] lookup terminal", {
+      requestKey,
+      stage: kind,
+      mbid: trimmedId,
+      metadataEndpoint,
+      attempt: maxAttempts,
+      outcome: "transient-failure-after-final-retry",
+    });
+  }
+
+  return {
+    status: "transient-failure",
+    primaryUrl: "",
+    candidates: [],
+    metadataEndpoint,
+    path: kind,
+    attempt: maxAttempts,
+  };
+}
+
+async function lookupCoverArtById(
+  id: string,
+  kind: "release" | "release-group"
+): Promise<ArtworkResolution> {
+  const lookup = await lookupCoverArtCandidatesById(id, kind);
+  return toArtworkResolution(lookup);
+}
+
+type ArtworkSelectionInput = {
+  preferredUrl?: string;
+  releaseId?: string;
+  releaseGroupId?: string;
+  selectedAlbumLabel: string;
+};
+
+export type LegacyArtworkRepairResult = {
+  status:
+    | "identical-result"
+    | "same-image-alternate-size"
+    | "alternate-image-found"
+    | "alternate-release-found"
+    | "no-alternate-art"
+    | "transient-metadata-failure"
+    | "unrepairable";
+  url: string;
+  fallbackUrl?: string;
+  metadataEndpoint?: string;
+  releaseGroupMetadataEndpoint?: string;
+  releaseGroupMbid?: string;
+  sourceReleaseMbid?: string;
+  candidateIndex?: number;
+  candidateReleaseMbid?: string;
+  kind?: CoverArtArchiveLegacyKind;
+  mbid?: string;
+};
+
+type LegacyRepairContext = {
+  failedUrl: string;
+  attemptedUrls: string[];
+  attemptedReleaseMbids?: string[];
+  originReleaseMbid?: string;
+  resolvedReleaseGroupMbid?: string;
+};
+
+function buildAttemptedSet(attemptedUrls: string[]): Set<string> {
+  const attempted = new Set<string>();
+  for (const url of attemptedUrls) {
+    const normalized = normalizeAlbumArtUrlOrNull(url);
+    if (normalized) {
+      attempted.add(normalized);
+    }
+  }
+
+  return attempted;
+}
+
+function isSameImageAlternateSize(
+  failedIdentity: CoverArtArchiveArtworkIdentity | null,
+  candidateIdentity: CoverArtArchiveArtworkIdentity | null,
+  failedUrl: string,
+  candidateUrl: string
+): boolean {
+  if (!isEquivalentCoverArtArchiveImage(failedIdentity, candidateIdentity)) {
+    return false;
+  }
+
+  return normalizeAlbumArtUrlOrNull(failedUrl) !== normalizeAlbumArtUrlOrNull(candidateUrl);
+}
+
+async function resolveReleaseGroupIdForRelease(releaseId: string): Promise<string> {
+  const trimmedReleaseId = releaseId.trim().toLowerCase();
+  if (!trimmedReleaseId) {
     return "";
   }
 
-  const cachedCover = coverCache.get(releaseGroupId);
-  if (typeof cachedCover === "string") {
-    return cachedCover;
+  const cached = releaseToReleaseGroupCache.get(trimmedReleaseId);
+  if (typeof cached === "string") {
+    return cached;
   }
 
-  const inFlightRequest = pendingCoverRequests.get(releaseGroupId);
-  if (inFlightRequest) {
-    return inFlightRequest;
+  const inFlight = pendingReleaseToGroupRequests.get(trimmedReleaseId);
+  if (inFlight) {
+    return inFlight;
   }
 
-  const request = (async () => {
+  const request: Promise<string> = (async () => {
+    const endpoint = `${MUSICBRAINZ_RELEASE_URL}/${trimmedReleaseId}?inc=release-groups&fmt=json`;
+
     try {
-      const coverResponse = await fetch(`${COVER_ART_URL}/${releaseGroupId}`, {
-        headers: {
-          Accept: "application/json",
-        },
-      });
-
-      if (!coverResponse.ok) {
-        coverCache.set(releaseGroupId, "");
+      const response = await fetchWithTimeout(endpoint);
+      if (!response.ok) {
+        releaseToReleaseGroupCache.set(trimmedReleaseId, "");
         return "";
       }
 
-      const coverData = (await coverResponse.json()) as {
-        images?: Array<{
-          front?: boolean;
-          image?: string;
-          thumbnails?: {
-            small?: string;
-            large?: string;
-          };
-        }>;
-      };
-
-      const frontImage = coverData.images?.find((image) => image.front) ?? coverData.images?.[0];
-      const coverUrl = frontImage?.thumbnails?.small || frontImage?.thumbnails?.large || frontImage?.image || "";
-      coverCache.set(releaseGroupId, coverUrl);
-      return coverUrl;
+      const payload = (await response.json()) as MusicBrainzReleaseLookupPayload;
+      const releaseGroupId = payload["release-group"]?.id?.trim().toLowerCase() ?? "";
+      releaseToReleaseGroupCache.set(trimmedReleaseId, releaseGroupId);
+      return releaseGroupId;
     } catch {
-      coverCache.set(releaseGroupId, "");
       return "";
     } finally {
-      pendingCoverRequests.delete(releaseGroupId);
+      pendingReleaseToGroupRequests.delete(trimmedReleaseId);
     }
   })();
 
-  pendingCoverRequests.set(releaseGroupId, request);
+  pendingReleaseToGroupRequests.set(trimmedReleaseId, request);
   return request;
 }
 
+function scoreAlternateReleaseCandidate(candidate: AlternateReleaseCandidate): number {
+  let score = 0;
+
+  const status = candidate.status.toLowerCase();
+  const primaryType = candidate.primaryType.toLowerCase();
+
+  if (status === "official") {
+    score += 60;
+  }
+
+  if (primaryType === "album") {
+    score += 40;
+  }
+
+  if (candidate.hasFrontCover === true) {
+    score += 35;
+  } else if (candidate.hasFrontCover === false) {
+    score -= 25;
+  }
+
+  if (candidate.country) {
+    score += 10;
+  }
+
+  if (candidate.date) {
+    score += 10;
+  }
+
+  return score;
+}
+
+async function loadAlternateReleasesForReleaseGroup(releaseGroupMbid: string): Promise<AlternateReleaseCandidate[]> {
+  const trimmedGroupMbid = releaseGroupMbid.trim().toLowerCase();
+  if (!trimmedGroupMbid) {
+    return [];
+  }
+
+  const cached = releaseGroupAlternateReleaseCache.get(trimmedGroupMbid);
+  if (cached) {
+    return cached;
+  }
+
+  const inFlight = pendingReleaseGroupAlternateReleaseRequests.get(trimmedGroupMbid);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const request: Promise<AlternateReleaseCandidate[]> = (async () => {
+    const endpoint = `${MUSICBRAINZ_RELEASE_URL}?release-group=${encodeURIComponent(trimmedGroupMbid)}&fmt=json&limit=100`;
+
+    try {
+      const response = await fetchWithTimeout(endpoint);
+      if (!response.ok) {
+        if (__DEV__) {
+          console.log("[RecordQuest][artwork] musicbrainz alternate releases terminal", {
+            requestKey: `mb-release-group-releases:${trimmedGroupMbid}`,
+            endpoint,
+            outcome: "http-non-success",
+            status: response.status,
+          });
+        }
+
+        releaseGroupAlternateReleaseCache.set(trimmedGroupMbid, []);
+        return [];
+      }
+
+      let payload: MusicBrainzReleaseBrowsePayload;
+
+      try {
+        payload = (await response.json()) as MusicBrainzReleaseBrowsePayload;
+      } catch (error) {
+        if (__DEV__) {
+          console.log("[RecordQuest][artwork] musicbrainz alternate releases terminal", {
+            requestKey: `mb-release-group-releases:${trimmedGroupMbid}`,
+            endpoint,
+            outcome: "json-parse-failure",
+            message: error instanceof Error ? error.message : "unknown error",
+          });
+        }
+
+        releaseGroupAlternateReleaseCache.set(trimmedGroupMbid, []);
+        return [];
+      }
+
+      const rows = Array.isArray(payload.releases) ? payload.releases : [];
+
+      const seenReleaseIds = new Set<string>();
+      const candidates: AlternateReleaseCandidate[] = [];
+
+      for (const row of rows) {
+        const releaseMbid = row.id?.trim().toLowerCase() ?? "";
+        if (!releaseMbid || seenReleaseIds.has(releaseMbid)) {
+          continue;
+        }
+
+        seenReleaseIds.add(releaseMbid);
+        candidates.push({
+          releaseMbid,
+          status: row.status?.trim() ?? "",
+          date: row.date?.trim() ?? "",
+          country: row.country?.trim() ?? "",
+          hasFrontCover:
+            typeof row["cover-art-archive"]?.front === "boolean"
+              ? row["cover-art-archive"]?.front
+              : null,
+          primaryType: row["release-group"]?.["primary-type"]?.trim() ?? "",
+        });
+      }
+
+      candidates.sort((a, b) => scoreAlternateReleaseCandidate(b) - scoreAlternateReleaseCandidate(a));
+      releaseGroupAlternateReleaseCache.set(trimmedGroupMbid, candidates);
+
+      if (__DEV__) {
+        console.log("[RecordQuest][artwork] musicbrainz alternate releases terminal", {
+          requestKey: `mb-release-group-releases:${trimmedGroupMbid}`,
+          endpoint,
+          outcome: "success",
+          candidateCount: candidates.length,
+        });
+      }
+
+      return candidates;
+    } catch (error) {
+      if (__DEV__) {
+        const message = error instanceof Error ? error.message : "unknown error";
+        console.log("[RecordQuest][artwork] musicbrainz alternate releases terminal", {
+          requestKey: `mb-release-group-releases:${trimmedGroupMbid}`,
+          endpoint,
+          outcome: message.toLowerCase().includes("abort") ? "timeout" : "fetch-exception",
+          message,
+        });
+      }
+
+      return [];
+    } finally {
+      pendingReleaseGroupAlternateReleaseRequests.delete(trimmedGroupMbid);
+    }
+  })();
+
+  pendingReleaseGroupAlternateReleaseRequests.set(trimmedGroupMbid, request);
+  return request;
+}
+
+function pickAlternateCandidate(
+  failedUrl: string,
+  failedIdentity: CoverArtArchiveArtworkIdentity | null,
+  candidates: CoverArtCandidate[],
+  attemptedSet: Set<string>,
+  excludedIdentityKeys: Set<string>
+): {
+  candidate: CoverArtCandidate | null;
+  rejectedAsIdentical: string[];
+  rejectedAsSameImageAlternateSize: string[];
+} {
+  const rejectedAsIdentical: string[] = [];
+  const rejectedAsSameImageAlternateSize: string[] = [];
+
+  const normalizedFailedUrl = normalizeAlbumArtUrlOrNull(failedUrl);
+
+  for (const candidate of candidates) {
+    const normalizedCandidateUrl = normalizeAlbumArtUrlOrNull(candidate.url);
+    if (!normalizedCandidateUrl) {
+      continue;
+    }
+
+    if (attemptedSet.has(normalizedCandidateUrl)) {
+      rejectedAsIdentical.push(normalizedCandidateUrl);
+      continue;
+    }
+
+    if (normalizedFailedUrl && normalizedCandidateUrl === normalizedFailedUrl) {
+      rejectedAsIdentical.push(normalizedCandidateUrl);
+      continue;
+    }
+
+    if (isSameImageAlternateSize(failedIdentity, candidate.identity, failedUrl, normalizedCandidateUrl)) {
+      rejectedAsSameImageAlternateSize.push(normalizedCandidateUrl);
+      continue;
+    }
+
+    const identityKey = toIdentityKey(candidate.identity);
+    if (identityKey && excludedIdentityKeys.has(identityKey)) {
+      rejectedAsSameImageAlternateSize.push(normalizedCandidateUrl);
+      continue;
+    }
+
+    return {
+      candidate,
+      rejectedAsIdentical,
+      rejectedAsSameImageAlternateSize,
+    };
+  }
+
+  return {
+    candidate: null,
+    rejectedAsIdentical,
+    rejectedAsSameImageAlternateSize,
+  };
+}
+
+async function resolveArtworkForSelection(input: ArtworkSelectionInput): Promise<ArtworkResolution> {
+  const preferredUrl = normalizeAlbumArtUrlOrNull(input.preferredUrl);
+  const releaseId = input.releaseId?.trim() || "";
+  const releaseGroupId = input.releaseGroupId?.trim() || "";
+  const cacheKey = buildArtworkCacheKey(releaseId, releaseGroupId);
+
+  if (__DEV__) {
+    console.log("[RecordQuest][artwork] resolve start", {
+      album: input.selectedAlbumLabel,
+      hasPreferred: Boolean(preferredUrl),
+      hasReleaseId: Boolean(releaseId),
+      hasReleaseGroupId: Boolean(releaseGroupId),
+    });
+  }
+
+  if (preferredUrl) {
+    if (__DEV__) {
+      console.log("[RecordQuest][artwork] resolve result", {
+        album: input.selectedAlbumLabel,
+        classification: "valid artwork",
+        path: "preferred",
+      });
+    }
+
+    return {
+      status: "valid",
+      url: preferredUrl,
+      path: "preferred",
+      attempt: 1,
+    };
+  }
+
+  if (!releaseId && !releaseGroupId) {
+    return {
+      status: "no-art",
+      url: "",
+      path: "none",
+      attempt: 1,
+    };
+  }
+
+  const cached = artworkResolutionCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    return {
+      status: cached.status,
+      url: cached.url,
+      fallbackUrl: cached.fallbackUrl,
+      path: "none",
+      attempt: 1,
+    };
+  }
+
+  const inFlight = pendingArtworkRequests.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const request: Promise<ArtworkResolution> = (async (): Promise<ArtworkResolution> => {
+    if (releaseId) {
+      const releaseOutcome = await lookupCoverArtById(releaseId, "release");
+
+      if (releaseOutcome.status === "valid") {
+        artworkResolutionCache.set(cacheKey, {
+          status: "valid",
+          url: releaseOutcome.url,
+          fallbackUrl: releaseOutcome.fallbackUrl ?? "",
+          expiresAt: Date.now() + NO_ART_CACHE_TTL_MS,
+        });
+        return releaseOutcome;
+      }
+
+      if (!releaseGroupId) {
+        if (releaseOutcome.status === "no-art") {
+          artworkResolutionCache.set(cacheKey, {
+            status: "no-art",
+            url: "",
+            fallbackUrl: "",
+            expiresAt: Date.now() + NO_ART_CACHE_TTL_MS,
+          });
+        }
+        return releaseOutcome;
+      }
+    }
+
+    if (releaseGroupId) {
+      const groupOutcome = await lookupCoverArtById(releaseGroupId, "release-group");
+
+      if (groupOutcome.status === "valid") {
+        artworkResolutionCache.set(cacheKey, {
+          status: "valid",
+          url: groupOutcome.url,
+          fallbackUrl: groupOutcome.fallbackUrl ?? "",
+          expiresAt: Date.now() + NO_ART_CACHE_TTL_MS,
+        });
+        return groupOutcome;
+      }
+
+      if (groupOutcome.status === "no-art") {
+        artworkResolutionCache.set(cacheKey, {
+          status: "no-art",
+          url: "",
+          fallbackUrl: "",
+          expiresAt: Date.now() + NO_ART_CACHE_TTL_MS,
+        });
+      }
+
+      return groupOutcome;
+    }
+
+    return {
+      status: "no-art",
+      url: "",
+      path: "none",
+      attempt: 1,
+    };
+  })();
+
+  pendingArtworkRequests.set(cacheKey, request);
+
+  try {
+    const outcome = await request;
+
+    if (__DEV__) {
+      console.log("[RecordQuest][artwork] resolve result", {
+        album: input.selectedAlbumLabel,
+        classification:
+          outcome.status === "valid"
+            ? "valid artwork"
+            : outcome.status === "no-art"
+              ? "confirmed no artwork"
+              : outcome.status === "transient-failure"
+                ? "transient failure"
+                : "malformed URL",
+        path: outcome.path,
+        attempt: outcome.attempt,
+      });
+    }
+
+    return outcome;
+  } finally {
+    pendingArtworkRequests.delete(cacheKey);
+  }
+}
+
 async function findReleaseGroups(query: string) {
-  const response = await fetch(`${MUSICBRAINZ_URL}/?query=${encodeURIComponent(query)}&fmt=json&limit=18`, {
+  const response = await fetch(`${MUSICBRAINZ_RELEASE_GROUP_URL}/?query=${encodeURIComponent(query)}&fmt=json&limit=18`, {
     headers: {
       Accept: "application/json",
       "User-Agent": "RecordQuest/1.0 (https://recordquest.app)",
@@ -684,10 +1583,12 @@ async function mapReleaseGroupsToResults(
 
     return {
       id: releaseGroup.id || `${albumTitle}-${artistName}`,
+      releaseGroupId: releaseGroup.id || undefined,
       album: albumTitle,
       artist: artistName,
       year,
       cover: "",
+      coverThumbnail: undefined,
       genre: buildGenre(releaseGroup["primary-type"], releaseGroup["secondary-types"]),
       format: buildReleaseFormat(releaseGroup["primary-type"]),
       score,
@@ -729,10 +1630,20 @@ export async function searchAlbumResults(album: string, artist: string) {
 
     const enrichedResults = await Promise.all(
       results.map(async (result) => {
-        const cover = await fetchReleaseGroupCover(result.id);
+        const resolution = await resolveArtworkForSelection({
+          preferredUrl: result.cover,
+          releaseId: result.releaseId,
+          releaseGroupId: result.releaseGroupId || result.id,
+          selectedAlbumLabel: `${result.album} - ${result.artist}`,
+        });
+
+        const cover = resolution.status === "valid" ? resolution.url : "";
+        const coverThumbnail = resolution.status === "valid" ? resolution.fallbackUrl ?? cover : undefined;
+
         return {
           ...result,
           cover,
+          coverThumbnail,
           score: result.score + (cover ? 16 : 0),
         } satisfies ScoredAlbumSearchResult;
       })
@@ -794,11 +1705,296 @@ export async function lookupAlbumMetadata(album: string, artist: string) {
   };
 }
 
+export async function resolveSearchResultArtwork(result: AlbumSearchResult): Promise<string> {
+  const resolution = await resolveArtworkForSelection({
+    preferredUrl: result.cover,
+    releaseId: result.releaseId,
+    releaseGroupId: result.releaseGroupId || result.id,
+    selectedAlbumLabel: `${result.album} - ${result.artist}`,
+  });
+
+  return resolution.status === "valid" ? resolution.url : "";
+}
+
+export async function repairLegacyCoverArtUrl(
+  rawUrl: string,
+  context: LegacyRepairContext
+): Promise<LegacyArtworkRepairResult> {
+  const legacyMatch = matchLegacyConstructedCoverArtArchiveUrl(rawUrl);
+
+  if (!legacyMatch) {
+    return {
+      status: "unrepairable",
+      url: "",
+    };
+  }
+
+  const failedUrl = normalizeAlbumArtUrlOrNull(context.failedUrl) ?? normalizeAlbumArtUrlOrNull(rawUrl) ?? "";
+  const attemptedSet = buildAttemptedSet(context.attemptedUrls);
+  if (failedUrl) {
+    attemptedSet.add(failedUrl);
+  }
+
+  const attemptedReleaseSet = new Set(
+    (context.attemptedReleaseMbids ?? [])
+      .map((mbid) => mbid.trim().toLowerCase())
+      .filter((mbid) => mbid.length > 0)
+  );
+
+  const failedIdentity = parseCoverArtArchiveArtworkIdentity(failedUrl || rawUrl);
+  const failedIdentityKey = toIdentityKey(failedIdentity);
+  const excludedIdentityKeys = new Set<string>();
+
+  if (failedIdentityKey) {
+    excludedIdentityKeys.add(failedIdentityKey);
+  }
+
+  const attemptedUrlFingerprint = [...attemptedSet].sort().join("|");
+  const attemptedReleaseFingerprint = [...attemptedReleaseSet].sort().join("|");
+  const cacheKey = `${legacyMatch.kind}:${legacyMatch.mbid}:${failedIdentityKey ?? "no-image"}:${attemptedUrlFingerprint}:${attemptedReleaseFingerprint}`;
+  const cached = legacyRepairCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const inFlight = pendingLegacyRepairRequests.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const request: Promise<LegacyArtworkRepairResult> = (async () => {
+    let hadIdenticalCandidate = false;
+    let hadSameImageSizeVariant = false;
+    let hadTransientFailure = false;
+
+    const originReleaseMbid =
+      context.originReleaseMbid?.trim().toLowerCase() ||
+      (legacyMatch.kind === "release" ? legacyMatch.mbid : "");
+
+    if (__DEV__) {
+      console.log("[RecordQuest][artwork] repair start", {
+        requestKey: `${legacyMatch.kind}:${legacyMatch.mbid}`,
+        originalFailedReleaseMbid: originReleaseMbid || null,
+      });
+    }
+
+    let releaseLookup: CoverArtLookupResult | null = null;
+
+    if (legacyMatch.kind === "release") {
+      releaseLookup = await lookupCoverArtCandidatesById(legacyMatch.mbid, "release", 1);
+
+      if (releaseLookup.status === "transient-failure") {
+        hadTransientFailure = true;
+      }
+
+      if (releaseLookup.status === "valid") {
+        const sameReleasePick = pickAlternateCandidate(
+          failedUrl || rawUrl,
+          failedIdentity,
+          releaseLookup.candidates,
+          attemptedSet,
+          excludedIdentityKeys
+        );
+
+        if (__DEV__) {
+          console.log("[RecordQuest][artwork] release metadata candidates", {
+            metadataEndpoint: releaseLookup.metadataEndpoint,
+            candidateCount: releaseLookup.candidates.length,
+            rejectedIdentical: sameReleasePick.rejectedAsIdentical,
+            rejectedSameImageAlternateSize: sameReleasePick.rejectedAsSameImageAlternateSize,
+          });
+        }
+
+        hadIdenticalCandidate = hadIdenticalCandidate || sameReleasePick.rejectedAsIdentical.length > 0;
+        hadSameImageSizeVariant =
+          hadSameImageSizeVariant || sameReleasePick.rejectedAsSameImageAlternateSize.length > 0;
+
+        if (sameReleasePick.candidate) {
+          return {
+            status: "alternate-image-found",
+            url: sameReleasePick.candidate.url,
+            metadataEndpoint: releaseLookup.metadataEndpoint,
+            kind: legacyMatch.kind,
+            mbid: legacyMatch.mbid,
+            sourceReleaseMbid: sameReleasePick.candidate.sourceReleaseMbid ?? undefined,
+            candidateIndex: 0,
+            candidateReleaseMbid: legacyMatch.mbid,
+          };
+        }
+      }
+    }
+
+    const releaseGroupMbid =
+      context.resolvedReleaseGroupMbid?.trim().toLowerCase() ||
+      (legacyMatch.kind === "release-group"
+        ? legacyMatch.mbid
+        : originReleaseMbid
+          ? await resolveReleaseGroupIdForRelease(originReleaseMbid)
+          : "");
+
+    if (__DEV__) {
+      console.log("[RecordQuest][artwork] resolved release-group mbid", {
+        requestKey: `${legacyMatch.kind}:${legacyMatch.mbid}`,
+        releaseGroupMbid,
+      });
+    }
+
+    if (!releaseGroupMbid) {
+      return {
+        status: hadTransientFailure ? "transient-metadata-failure" : "no-alternate-art",
+        url: "",
+        metadataEndpoint: releaseLookup?.metadataEndpoint,
+        kind: legacyMatch.kind,
+        mbid: legacyMatch.mbid,
+      };
+    }
+
+    const alternateReleases = await loadAlternateReleasesForReleaseGroup(releaseGroupMbid);
+
+    const filteredByFrontPreference = alternateReleases.filter((candidate) => candidate.hasFrontCover !== false);
+    const pool = filteredByFrontPreference.length >= 3 ? filteredByFrontPreference : alternateReleases;
+
+    const selectedAlternateReleases: AlternateReleaseCandidate[] = [];
+    const seenReleaseIds = new Set<string>();
+
+    for (const candidate of pool) {
+      if (selectedAlternateReleases.length >= 3) {
+        break;
+      }
+
+      if (!candidate.releaseMbid || seenReleaseIds.has(candidate.releaseMbid)) {
+        continue;
+      }
+
+      if (originReleaseMbid && candidate.releaseMbid === originReleaseMbid) {
+        continue;
+      }
+
+      if (attemptedReleaseSet.has(candidate.releaseMbid)) {
+        continue;
+      }
+
+      seenReleaseIds.add(candidate.releaseMbid);
+      selectedAlternateReleases.push(candidate);
+    }
+
+    if (__DEV__) {
+      console.log("[RecordQuest][artwork] alternate release candidates", {
+        requestKey: `${legacyMatch.kind}:${legacyMatch.mbid}`,
+        releaseGroupMbid,
+        count: selectedAlternateReleases.length,
+        candidates: selectedAlternateReleases.map((candidate) => ({
+          releaseMbid: candidate.releaseMbid,
+          status: candidate.status,
+          date: candidate.date,
+          country: candidate.country,
+          hasFrontCover: candidate.hasFrontCover,
+        })),
+      });
+    }
+
+    for (let index = 0; index < selectedAlternateReleases.length; index += 1) {
+      const candidateRelease = selectedAlternateReleases[index];
+      const lookup = await lookupCoverArtCandidatesById(candidateRelease.releaseMbid, "release", 1);
+
+      if (lookup.status === "transient-failure") {
+        hadTransientFailure = true;
+        continue;
+      }
+
+      if (lookup.status !== "valid") {
+        continue;
+      }
+
+      const pick = pickAlternateCandidate(
+        failedUrl || rawUrl,
+        failedIdentity,
+        lookup.candidates,
+        attemptedSet,
+        excludedIdentityKeys
+      );
+
+      hadIdenticalCandidate = hadIdenticalCandidate || pick.rejectedAsIdentical.length > 0;
+      hadSameImageSizeVariant =
+        hadSameImageSizeVariant || pick.rejectedAsSameImageAlternateSize.length > 0;
+
+      if (__DEV__) {
+        console.log("[RecordQuest][artwork] alternate release lookup result", {
+          requestKey: `${legacyMatch.kind}:${legacyMatch.mbid}`,
+          candidateReleaseMbid: candidateRelease.releaseMbid,
+          candidateIndex: index,
+          metadataEndpoint: lookup.metadataEndpoint,
+          rejectedIdentical: pick.rejectedAsIdentical,
+          rejectedSameImageAlternateSize: pick.rejectedAsSameImageAlternateSize,
+        });
+      }
+
+      if (pick.candidate) {
+        return {
+          status: "alternate-release-found",
+          url: pick.candidate.url,
+          metadataEndpoint: releaseLookup?.metadataEndpoint,
+          releaseGroupMbid,
+          sourceReleaseMbid: pick.candidate.sourceReleaseMbid ?? candidateRelease.releaseMbid,
+          candidateIndex: index,
+          candidateReleaseMbid: candidateRelease.releaseMbid,
+          kind: legacyMatch.kind,
+          mbid: legacyMatch.mbid,
+        };
+      }
+
+      if (__DEV__) {
+        console.log("[RecordQuest][artwork] moving to next alternate release", {
+          requestKey: `${legacyMatch.kind}:${legacyMatch.mbid}`,
+          nextCandidateIndex: index + 1,
+        });
+      }
+    }
+
+    const terminalStatus = hadSameImageSizeVariant
+      ? "same-image-alternate-size"
+      : hadIdenticalCandidate
+        ? "identical-result"
+        : hadTransientFailure
+          ? "transient-metadata-failure"
+          : "no-alternate-art";
+
+    if (__DEV__) {
+      console.log("[RecordQuest][artwork] fallback exhausted", {
+        requestKey: `${legacyMatch.kind}:${legacyMatch.mbid}`,
+        releaseGroupMbid,
+        status: terminalStatus,
+      });
+    }
+
+    return {
+      status: terminalStatus,
+      url: "",
+      metadataEndpoint: releaseLookup?.metadataEndpoint,
+      releaseGroupMbid,
+      kind: legacyMatch.kind,
+      mbid: legacyMatch.mbid,
+    };
+  })();
+
+  pendingLegacyRepairRequests.set(cacheKey, request);
+
+  try {
+    const outcome = await request;
+    legacyRepairCache.set(cacheKey, outcome);
+    return outcome;
+  } finally {
+    pendingLegacyRepairRequests.delete(cacheKey);
+  }
+}
+
 export function enrichRecordItem(item: RecordItem, metadata: { year: string; cover: string; genre?: string }) {
+  const normalizedCover = normalizeAlbumArtUrlOrNull(metadata.cover);
+
   return {
     ...item,
     year: metadata.year || item.year,
-    cover: metadata.cover || item.cover,
+    cover: normalizedCover || item.cover,
     genre: metadata.genre || item.genre,
   } satisfies RecordItem;
 }

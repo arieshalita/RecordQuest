@@ -6,6 +6,7 @@ import type { RecordItem } from "../hooks/types";
 
 type AlbumDetailScreenProps = {
   selectedRecord: RecordItem;
+  detailSource: "Collection" | "Wishlist" | null;
   isEditingRecord: boolean;
   recordDraft: Partial<RecordItem>;
   updateRecordDraft: (field: keyof RecordItem, value: string | number) => void;
@@ -17,6 +18,7 @@ type AlbumDetailScreenProps = {
 
 export function AlbumDetailScreen({
   selectedRecord,
+  detailSource,
   isEditingRecord,
   recordDraft,
   updateRecordDraft,
@@ -64,7 +66,16 @@ export function AlbumDetailScreen({
     <ScrollView contentContainerStyle={styles.page}>
       <TopBar title="Collector Journal" back={closeRecordDetail} />
       <View style={styles.detailCard}>
-        <AlbumArt uri={selectedRecord.cover} hint="detail" style={styles.detailCover} />
+        <AlbumArt
+          uri={selectedRecord.cover}
+          hint="detail"
+          style={styles.detailCover}
+          debugScreen={detailSource === "Wishlist" ? "wishlist" : "owner-collection"}
+          debugRecordId={selectedRecord.id}
+          debugAlbum={selectedRecord.album}
+          debugArtist={selectedRecord.artist}
+          debugUriSource="supabase"
+        />
         <Text style={styles.detailTitle}>{selectedRecord.album}</Text>
         <Text style={styles.detailArtist}>{selectedRecord.artist}</Text>
         <View style={styles.metaRow}>

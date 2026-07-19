@@ -1,6 +1,7 @@
 import type { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "./supabase-client";
 import type { RecordItem } from "./types";
+import { isValidAlbumArtUrl, normalizeAlbumArtUrlOrNull } from "../utils/album-art";
 
 type RecordRow = RecordItem & {
   user_id: string;
@@ -85,6 +86,13 @@ function ensureUserId(userId: string): string {
     throw new Error("A valid userId is required for Supabase queries.");
   }
   return trimmed;
+}
+
+function sanitizeRecordArtwork(items: RecordItem[]): RecordItem[] {
+  return items.map((item) => ({
+    ...item,
+    cover: normalizeAlbumArtUrlOrNull(item.cover) ?? "",
+  }));
 }
 
 function isMissingAddedAtColumnError(error: PostgrestError): boolean {
@@ -320,7 +328,17 @@ export async function loadRecords(userId: string): Promise<RecordItem[]> {
     data = dataWithAddedAt;
   }
 
-  return stripUserId((data as RecordRow[] | null) ?? []) as RecordItem[];
+  const records = sanitizeRecordArtwork(stripUserId((data as RecordRow[] | null) ?? []) as RecordItem[]);
+
+  if (__DEV__) {
+    const withArtworkCount = records.filter((item) => isValidAlbumArtUrl(item.cover)).length;
+    console.log("[RecordQuest][artwork] Supabase reload records artwork", {
+      total: records.length,
+      withArtwork: withArtworkCount,
+    });
+  }
+
+  return records;
 }
 
 export async function saveRecords(
@@ -395,6 +413,7 @@ export async function saveRecords(
   }
 
   const rows: RecordRow[] = records.map((record) => {
+    const cover = normalizeAlbumArtUrlOrNull(record.cover) ?? "";
     const parsedId = toCollectionItemId(record.id);
     const existingAddedAt = parsedId ? existingAddedAtById.get(parsedId) : undefined;
     const currentAddedAt = typeof record.added_at === "string" ? record.added_at.trim() : "";
@@ -404,6 +423,7 @@ export async function saveRecords(
       return {
         user_id: scopedUserId,
         ...record,
+        cover,
         added_at: resolvedAddedAt,
       };
     }
@@ -412,8 +432,17 @@ export async function saveRecords(
     return {
       user_id: scopedUserId,
       ...recordWithoutAddedAt,
+      cover,
     } as RecordRow;
   });
+
+  if (__DEV__) {
+    const withArtworkCount = rows.filter((item) => isValidAlbumArtUrl(item.cover)).length;
+    console.log("[RecordQuest][artwork] saveRecords payload artwork", {
+      total: rows.length,
+      withArtwork: withArtworkCount,
+    });
+  }
 
   const { data: insertedRows, error: insertError } = await supabase
     .from("records")
@@ -479,7 +508,17 @@ export async function loadWishlist(userId: string): Promise<RecordItem[]> {
     data = dataWithAddedAt;
   }
 
-  return stripUserId((data as WishlistRow[] | null) ?? []) as RecordItem[];
+  const wishlist = sanitizeRecordArtwork(stripUserId((data as WishlistRow[] | null) ?? []) as RecordItem[]);
+
+  if (__DEV__) {
+    const withArtworkCount = wishlist.filter((item) => isValidAlbumArtUrl(item.cover)).length;
+    console.log("[RecordQuest][artwork] Supabase reload wishlist artwork", {
+      total: wishlist.length,
+      withArtwork: withArtworkCount,
+    });
+  }
+
+  return wishlist;
 }
 
 export async function saveWishlist(
@@ -543,6 +582,7 @@ export async function saveWishlist(
   }
 
   const rows: WishlistRow[] = wishlist.map((item) => {
+    const cover = normalizeAlbumArtUrlOrNull(item.cover) ?? "";
     const parsedId = toCollectionItemId(item.id);
     const existingAddedAt = parsedId ? existingAddedAtById.get(parsedId) : undefined;
     const currentAddedAt = typeof item.added_at === "string" ? item.added_at.trim() : "";
@@ -552,6 +592,7 @@ export async function saveWishlist(
       return {
         user_id: scopedUserId,
         ...item,
+        cover,
         added_at: resolvedAddedAt,
       };
     }
@@ -560,8 +601,17 @@ export async function saveWishlist(
     return {
       user_id: scopedUserId,
       ...itemWithoutAddedAt,
+      cover,
     } as WishlistRow;
   });
+
+  if (__DEV__) {
+    const withArtworkCount = rows.filter((item) => isValidAlbumArtUrl(item.cover)).length;
+    console.log("[RecordQuest][artwork] saveWishlist payload artwork", {
+      total: rows.length,
+      withArtwork: withArtworkCount,
+    });
+  }
 
   const { error: insertError } = await supabase.from("wishlist").insert(rows);
 
@@ -569,6 +619,39 @@ export async function saveWishlist(
     logSupabaseError("saveWishlist insert", insertError);
     throw toServiceError("Failed to save wishlist", insertError);
   }
+}
+
+async function patchOwnedCoverByTable(
+  table: "records" | "wishlist",
+  recordId: number,
+  coverUrl: string
+): Promise<boolean> {
+  const normalizedCover = normalizeAlbumArtUrlOrNull(coverUrl);
+  if (!normalizedCover) {
+    return false;
+  }
+
+  const { error } = await supabase
+    .from(table)
+    .update({
+      cover: normalizedCover,
+    })
+    .eq("id", recordId);
+
+  if (error) {
+    logSupabaseError(`patchOwnedCoverByTable ${table}`, error);
+    return false;
+  }
+
+  return true;
+}
+
+export async function patchOwnedRecordCover(recordId: number, coverUrl: string): Promise<boolean> {
+  return patchOwnedCoverByTable("records", recordId, coverUrl);
+}
+
+export async function patchOwnedWishlistCover(recordId: number, coverUrl: string): Promise<boolean> {
+  return patchOwnedCoverByTable("wishlist", recordId, coverUrl);
 }
 
 export async function loadActivity(userId: string): Promise<string[]> {

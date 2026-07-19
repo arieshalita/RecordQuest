@@ -999,7 +999,15 @@ export function ProfileScreen({
                   onPress={() => setSelectedPublicRecord(record)}
                 >
                   <View style={styles.publicRecordInfo}>
-                    <AlbumArt uri={record.cover} style={styles.publicRecordCover} />
+                    <AlbumArt
+                      uri={record.cover}
+                      style={styles.publicRecordCover}
+                      debugScreen="public-collection"
+                      debugRecordId={record.id}
+                      debugAlbum={record.album}
+                      debugArtist={record.artist}
+                      debugUriSource="supabase"
+                    />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.publicRecordAlbum}>{record.album}</Text>
                       <Text style={styles.publicRecordArtist}>{record.artist}</Text>
@@ -1052,7 +1060,16 @@ export function ProfileScreen({
           {selectedPublicRecord ? (
             <>
               <Text style={styles.publicDetailKicker}>From {resolvedProfileName}&apos;s Collection</Text>
-              <AlbumArt uri={selectedPublicRecord.cover} hint="detail" style={styles.publicDetailCover} />
+              <AlbumArt
+                uri={selectedPublicRecord.cover}
+                hint="detail"
+                style={styles.publicDetailCover}
+                debugScreen="public-collection"
+                debugRecordId={selectedPublicRecord.id}
+                debugAlbum={selectedPublicRecord.album}
+                debugArtist={selectedPublicRecord.artist}
+                debugUriSource="supabase"
+              />
               <Text style={styles.publicDetailAlbum}>{selectedPublicRecord.album}</Text>
               <Text style={styles.publicDetailArtist}>{selectedPublicRecord.artist}</Text>
               {selectedPublicRecord.year ? (

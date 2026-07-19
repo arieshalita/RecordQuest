@@ -52,10 +52,13 @@ export type AchievementCategory = {
 
 export type AlbumSearchResult = {
   id: string;
+  releaseId?: string;
+  releaseGroupId?: string;
   album: string;
   artist: string;
   year: string;
   cover: string;
+  coverThumbnail?: string;
   genre: string;
   format?: "album" | "ep" | "single";
 };

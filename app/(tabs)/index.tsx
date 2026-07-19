@@ -19,7 +19,12 @@ import {
   saveRecordQuestState,
   type RecordItem,
 } from "../../hooks/recordquest-storage";
-import { enrichRecordItem, searchAlbumResults, type AlbumSearchResult } from "../../hooks/album-lookup";
+import {
+  enrichRecordItem,
+  resolveSearchResultArtwork,
+  searchAlbumResults,
+  type AlbumSearchResult,
+} from "../../hooks/album-lookup";
 import type { StoreItem, AchievementCategory } from "../../hooks/types";
 import { calculateAchievementCategories } from "../../utils/achievements";
 import { calculateCollectionAnalytics } from "../../utils/analytics";
@@ -53,6 +58,7 @@ import {
   loadUserAchievementEarnedAt,
   persistAchievementEarnedAt,
 } from "../../hooks/recordquest-supabase-service";
+import { isValidAlbumArtUrl, normalizeAlbumArtUrlOrNull } from "../../utils/album-art";
 
 const starterRecords: RecordItem[] = [
   {
@@ -142,7 +148,8 @@ export default function App() {
     "Started your RecordQuest collection",
   ]);
   const [detailStore, setDetailStore] = useState<StoreItem | null>(null);
-  const [selectedRecord, setSelectedRecord] = useState<RecordItem | null>(null);
+  const [selectedRecordId, setSelectedRecordId] = useState<number | null>(null);
+  const [selectedRecordSnapshot, setSelectedRecordSnapshot] = useState<RecordItem | null>(null);
   const [detailSource, setDetailSource] = useState<"Collection" | "Wishlist" | null>(null);
   const [isEditingRecord, setIsEditingRecord] = useState(false);
   const [recordDraft, setRecordDraft] = useState<Partial<RecordItem>>({});
@@ -195,6 +202,9 @@ export default function App() {
   const suppressNextTypeaheadRef = useRef(false);
   const latestAlbumSearchRequestRef = useRef(0);
   const achievementEarnedAtInFlightRef = useRef(new Set<string>());
+  const detailOpenRequestIdRef = useRef(0);
+  const detailOpenStartedAtRef = useRef<number | null>(null);
+  const detailRecordVisibleLoggedRequestIdRef = useRef<number | null>(null);
 
   const shouldUseCloudBadgeData = isSupabaseDataModeEnabled() && !!user;
   const badgeRecords = shouldUseCloudBadgeData && recordStateSource !== "cloud" ? [] : records;
@@ -276,13 +286,11 @@ export default function App() {
     setPublicCollectionBackProfileUserId(null);
     setPublicCollectionBackProfileDisplayName(null);
     setDiscoverSearchText("");
-    setSelectedRecord(null);
+    setSelectedRecordId(null);
+    setSelectedRecordSnapshot(null);
     setDetailStore(null);
     setScreen("Home");
   }, [user?.id]);
-
-  const placeholderCover =
-    "https://upload.wikimedia.org/wikipedia/commons/3/3c/No-album-art.png";
 
   const loadNearbyStores = useCallback(async (invalidateCacheForCurrentLocation: boolean) => {
     console.log("[RecordQuest][stores] loading started", {
@@ -524,6 +532,73 @@ export default function App() {
       })
     : discoverUsers;
 
+  const detailSourceRecords = detailSource === "Wishlist" ? wishlist : records;
+
+  const detailRecord = useMemo(() => {
+    if (selectedRecordId === null) {
+      return null;
+    }
+
+    const resolved = detailSourceRecords.find((record) => record.id === selectedRecordId);
+    return resolved ?? selectedRecordSnapshot;
+  }, [detailSourceRecords, selectedRecordId, selectedRecordSnapshot]);
+
+  useEffect(() => {
+    if (screen !== "AlbumDetail") {
+      return;
+    }
+
+    const elapsedMs =
+      detailOpenStartedAtRef.current === null
+        ? null
+        : Date.now() - detailOpenStartedAtRef.current;
+
+    if (__DEV__) {
+      console.log("[RecordQuest][album-open] detail mounted", {
+        rawRouteParams: null,
+        resolvedRecordId: selectedRecordId,
+        resolvedRecordIdType: selectedRecordId === null ? "null" : typeof selectedRecordId,
+        hasNavigationRecord: Boolean(selectedRecordSnapshot),
+        fetchRequired: false,
+        tapToDetailMountMs: elapsedMs,
+      });
+    }
+  }, [screen, selectedRecordId, selectedRecordSnapshot]);
+
+  useEffect(() => {
+    if (screen !== "AlbumDetail") {
+      return;
+    }
+
+    const requestId = detailOpenRequestIdRef.current;
+    if (detailRecordVisibleLoggedRequestIdRef.current === requestId) {
+      return;
+    }
+
+    if (!detailRecord) {
+      return;
+    }
+
+    detailRecordVisibleLoggedRequestIdRef.current = requestId;
+
+    const elapsedMs =
+      detailOpenStartedAtRef.current === null
+        ? null
+        : Date.now() - detailOpenStartedAtRef.current;
+
+    if (__DEV__) {
+      console.log("[RecordQuest][album-open] detail record result", {
+        recordId: detailRecord.id,
+        found: true,
+        elapsedMs,
+        errorCode: null,
+        artworkUrl: detailRecord.cover || null,
+        tapToRecordVisibleMs: elapsedMs,
+        backgroundRefreshDurationMs: 0,
+      });
+    }
+  }, [detailRecord, screen]);
+
   function formatActivityTime(value: string): string {
     const timestamp = Date.parse(value);
     if (Number.isNaN(timestamp)) return "Recently";
@@ -713,6 +788,21 @@ export default function App() {
       return false;
     }
 
+    const selectedMetadataSnapshot = selectedMetadata;
+    let resolvedMetadataCover = selectedMetadataSnapshot?.cover ?? "";
+
+    if (selectedMetadataSnapshot && !isValidAlbumArtUrl(resolvedMetadataCover)) {
+      resolvedMetadataCover = await resolveSearchResultArtwork(selectedMetadataSnapshot);
+
+      if (__DEV__) {
+        console.log("[RecordQuest][artwork] selected result resolved during save", {
+          album: selectedMetadataSnapshot.album,
+          hasStableId: Boolean(selectedMetadataSnapshot.releaseId || selectedMetadataSnapshot.releaseGroupId || selectedMetadataSnapshot.id),
+          hasResolvedCover: Boolean(normalizeAlbumArtUrlOrNull(resolvedMetadataCover)),
+        });
+      }
+    }
+
     const baseItem: RecordItem = {
       id: Date.now(),
       album: trimmedAlbum,
@@ -720,7 +810,7 @@ export default function App() {
       added_at: new Date().toISOString(),
       year: "Unknown",
       genre: "Vinyl",
-      cover: placeholderCover,
+      cover: "",
       purchasedAt: purchasedAt.trim() || undefined,
       purchaseDate: "",
       condition: "Good",
@@ -728,15 +818,23 @@ export default function App() {
       notes: "",
     };
 
-    const metadata = selectedMetadata
+    const metadata = selectedMetadataSnapshot
       ? {
-          year: selectedMetadata.year,
-          cover: selectedMetadata.cover,
-          genre: selectedMetadata.genre,
+          year: selectedMetadataSnapshot.year,
+          cover: resolvedMetadataCover,
+          genre: selectedMetadataSnapshot.genre,
         }
       : null;
     const newItem = metadata ? enrichRecordItem(baseItem, metadata) : baseItem;
+    newItem.cover = normalizeAlbumArtUrlOrNull(newItem.cover) ?? "";
     newItem.purchasedAt = purchasedAt.trim() || undefined;
+
+    if (__DEV__) {
+      console.log("[RecordQuest][artwork] add payload artwork validity", {
+        album: newItem.album,
+        hasValidCover: Boolean(normalizeAlbumArtUrlOrNull(newItem.cover)),
+      });
+    }
 
     if (toWishlist) {
       setWishlist([newItem, ...wishlist]);
@@ -784,7 +882,22 @@ export default function App() {
     try {
       const results = await searchAlbumResults(trimmedAlbum, queryArtist);
       if (requestId !== latestAlbumSearchRequestRef.current) {
+        if (__DEV__) {
+          console.log("[RecordQuest][artwork] stale artwork result ignored", {
+            album: trimmedAlbum,
+            artist: queryArtist,
+          });
+        }
         return;
+      }
+
+      if (__DEV__) {
+        console.log("[RecordQuest][artwork] search results loaded", {
+          album: trimmedAlbum,
+          artist: queryArtist,
+          resultCount: results.length,
+          withArtworkCount: results.filter((item) => Boolean(normalizeAlbumArtUrlOrNull(item.cover))).length,
+        });
       }
 
       setSearchResults(results);
@@ -1020,8 +1133,29 @@ export default function App() {
     showSuccess(`✓ Removed from Wishlist`);
   }
 
+  function resetDetailOpenTracking() {
+    detailOpenStartedAtRef.current = null;
+    detailRecordVisibleLoggedRequestIdRef.current = null;
+  }
+
   function openRecordDetail(item: RecordItem, source: "Collection" | "Wishlist") {
-    setSelectedRecord(item);
+    const requestId = detailOpenRequestIdRef.current + 1;
+    detailOpenRequestIdRef.current = requestId;
+    detailOpenStartedAtRef.current = Date.now();
+    detailRecordVisibleLoggedRequestIdRef.current = null;
+
+    if (__DEV__) {
+      console.log("[RecordQuest][album-open] card pressed", {
+        cardRecordId: item.id,
+        cardRecordIdType: typeof item.id,
+        source,
+        hasCoverAtTap: Boolean(item.cover),
+        requestId,
+      });
+    }
+
+    setSelectedRecordId(item.id);
+    setSelectedRecordSnapshot(item);
     setDetailSource(source);
     setRecordDraft(item);
     setIsEditingRecord(false);
@@ -1036,12 +1170,16 @@ export default function App() {
   }
 
   function saveRecordDetail() {
-    if (!selectedRecord || !detailSource) return;
+    if (!detailRecord || !detailSource) return;
 
     const updatedRecord: RecordItem = {
-      ...selectedRecord,
+      ...detailRecord,
       ...recordDraft,
     } as RecordItem;
+
+    const draftCover = normalizeAlbumArtUrlOrNull(updatedRecord.cover);
+    const existingCover = normalizeAlbumArtUrlOrNull(detailRecord.cover);
+    updatedRecord.cover = draftCover || existingCover || "";
 
     if (detailSource === "Collection") {
       setRecords((current) => current.map((record) => (record.id === updatedRecord.id ? updatedRecord : record)));
@@ -1049,7 +1187,8 @@ export default function App() {
       setWishlist((current) => current.map((record) => (record.id === updatedRecord.id ? updatedRecord : record)));
     }
 
-    setSelectedRecord(updatedRecord);
+    setSelectedRecordId(updatedRecord.id);
+    setSelectedRecordSnapshot(updatedRecord);
     setRecordDraft(updatedRecord);
     setIsEditingRecord(false);
     setActivity((currentActivity) => [`Updated ${updatedRecord.album}`, ...currentActivity]);
@@ -1057,22 +1196,24 @@ export default function App() {
   }
 
   function deleteRecordDetail() {
-    if (!selectedRecord || !detailSource) return;
+    if (!detailRecord || !detailSource) return;
 
     if (detailSource === "Collection") {
-      setRecords((current) => current.filter((record) => record.id !== selectedRecord.id));
-      setActivity((currentActivity) => [`Deleted ${selectedRecord.album} from collection`, ...currentActivity]);
+      setRecords((current) => current.filter((record) => record.id !== detailRecord.id));
+      setActivity((currentActivity) => [`Deleted ${detailRecord.album} from collection`, ...currentActivity]);
       showSuccess(`✓ Removed from Collection`);
     } else {
-      setWishlist((current) => current.filter((record) => record.id !== selectedRecord.id));
-      setActivity((currentActivity) => [`Deleted ${selectedRecord.album} from wishlist`, ...currentActivity]);
+      setWishlist((current) => current.filter((record) => record.id !== detailRecord.id));
+      setActivity((currentActivity) => [`Deleted ${detailRecord.album} from wishlist`, ...currentActivity]);
       showSuccess(`✓ Removed from Wishlist`);
     }
 
-    setSelectedRecord(null);
+    setSelectedRecordId(null);
+    setSelectedRecordSnapshot(null);
     setDetailSource(null);
     setIsEditingRecord(false);
     setRecordDraft({});
+    resetDetailOpenTracking();
     setScreen(detailSource === "Collection" ? "Collection" : "Wishlist");
   }
 
@@ -1080,10 +1221,12 @@ export default function App() {
     // Save the destination before clearing state
     const targetScreen = detailSource === "Collection" ? "Collection" : detailSource === "Wishlist" ? "Wishlist" : "Home";
     
-    setSelectedRecord(null);
+    setSelectedRecordId(null);
+    setSelectedRecordSnapshot(null);
     setDetailSource(null);
     setIsEditingRecord(false);
     setRecordDraft({});
+    resetDetailOpenTracking();
     setScreen(targetScreen);
   }
 
@@ -1226,7 +1369,17 @@ export default function App() {
                     <Text style={styles.followingActivityEntry}>{formatFollowingEntry(item.entry)}</Text>
                     {item.album || item.artist || item.cover ? (
                       <View style={styles.followingActivityMediaRow}>
-                        {item.cover ? <AlbumArt uri={item.cover} style={styles.followingActivityCover} /> : null}
+                        {item.cover ? (
+                          <AlbumArt
+                            uri={item.cover}
+                            style={styles.followingActivityCover}
+                            debugScreen="other"
+                            debugRecordId={item.id}
+                            debugAlbum={item.album}
+                            debugArtist={item.artist}
+                            debugUriSource="supabase"
+                          />
+                        ) : null}
                         <View style={styles.followingActivityMetaWrap}>
                           {item.album ? <Text style={styles.followingActivityAlbum}>{item.album}</Text> : null}
                           {item.artist ? <Text style={styles.followingActivityArtist}>{item.artist}</Text> : null}
@@ -1258,6 +1411,15 @@ export default function App() {
           onArtistChange={handleArtistChange}
           onSearch={searchAlbum}
           onSelectResult={(result) => {
+            if (__DEV__) {
+              console.log("[RecordQuest][artwork] selected album metadata", {
+                album: result.album,
+                hasReleaseId: Boolean(result.releaseId),
+                hasReleaseGroupId: Boolean(result.releaseGroupId || result.id),
+                hasValidCover: Boolean(normalizeAlbumArtUrlOrNull(result.cover)),
+              });
+            }
+
             suppressNextTypeaheadRef.current = true;
             latestAlbumSearchRequestRef.current += 1;
             setAlbum(result.album);
@@ -1278,6 +1440,7 @@ export default function App() {
           onRemove={removeRecord}
           onViewRecord={(record: RecordItem) => openRecordDetail(record, "Collection")}
           back={() => setScreen("Home")}
+          recordArtworkSource={recordStateSource === "cloud" ? "supabase" : "unknown"}
         />
       )}
 
@@ -1299,6 +1462,15 @@ export default function App() {
           onArtistChange={handleArtistChange}
           onSearch={searchAlbum}
           onSelectResult={(result) => {
+            if (__DEV__) {
+              console.log("[RecordQuest][artwork] selected album metadata", {
+                album: result.album,
+                hasReleaseId: Boolean(result.releaseId),
+                hasReleaseGroupId: Boolean(result.releaseGroupId || result.id),
+                hasValidCover: Boolean(normalizeAlbumArtUrlOrNull(result.cover)),
+              });
+            }
+
             suppressNextTypeaheadRef.current = true;
             latestAlbumSearchRequestRef.current += 1;
             setAlbum(result.album);
@@ -1320,6 +1492,7 @@ export default function App() {
           onViewRecord={(record: RecordItem) => openRecordDetail(record, "Wishlist")}
           back={() => setScreen("Home")}
           isWishlist={true}
+          recordArtworkSource={recordStateSource === "cloud" ? "supabase" : "unknown"}
         />
       )}
 
@@ -1339,9 +1512,10 @@ export default function App() {
         />
       )}
 
-      {screen === "AlbumDetail" && selectedRecord && (
+      {screen === "AlbumDetail" && detailRecord ? (
         <AlbumDetailScreen
-          selectedRecord={selectedRecord}
+          selectedRecord={detailRecord}
+          detailSource={detailSource}
           isEditingRecord={isEditingRecord}
           recordDraft={recordDraft}
           updateRecordDraft={updateRecordDraft}
@@ -1350,7 +1524,17 @@ export default function App() {
           setIsEditingRecord={setIsEditingRecord}
           closeRecordDetail={closeRecordDetail}
         />
-      )}
+      ) : null}
+
+      {screen === "AlbumDetail" && !detailRecord ? (
+        <View style={styles.cloudLoadingContainer}>
+          <ActivityIndicator size="small" color="#A78BFA" />
+          <Text style={styles.cloudLoadingText}>Opening album details...</Text>
+          <Pressable style={styles.cloudRetryButton} onPress={closeRecordDetail}>
+            <Text style={styles.cloudRetryButtonText}>Back</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {screen === "Profile" && (
         <ProfileScreen
@@ -2960,5 +3144,19 @@ const styles = StyleSheet.create({
     color: "#C4BEE0",
     fontSize: 16,
     fontWeight: "600",
+  },
+  cloudRetryButton: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: "rgba(167, 139, 250, 0.5)",
+    backgroundColor: "rgba(124, 58, 237, 0.18)",
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  cloudRetryButtonText: {
+    color: "#F4EDFF",
+    fontWeight: "700",
+    fontSize: 13,
   },
 });
