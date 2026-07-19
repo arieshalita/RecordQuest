@@ -14,6 +14,11 @@ export type SocialConnectionsResult = {
   users: SocialConnectionUser[];
   blockedByPolicy: boolean;
   error?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  errorStage?: "relation" | "profiles";
+  isTransientFailure?: boolean;
+  isInvalidTarget?: boolean;
 };
 
 type FollowRow = {
@@ -48,6 +53,24 @@ function maybePolicyBlocked(code: string | undefined, message: string): boolean 
   return code === "42501" || /permission denied|policy/i.test(message);
 }
 
+function isTransientFailure(code: string | undefined, message: string): boolean {
+  const normalized = message.toLowerCase();
+
+  if (maybePolicyBlocked(code, message)) {
+    return false;
+  }
+
+  if (!code) {
+    return /network|offline|timeout|timed out|failed to fetch|connection|temporar|gateway|unavailable|socket/i.test(normalized);
+  }
+
+  if (/^5\d\d$/.test(code)) {
+    return true;
+  }
+
+  return false;
+}
+
 export async function loadSocialConnections(
   viewedUserId: string,
   mode: SocialConnectionsMode,
@@ -60,6 +83,7 @@ export async function loadSocialConnections(
     return {
       users: [],
       blockedByPolicy: false,
+      isInvalidTarget: true,
     };
   }
 
@@ -92,6 +116,10 @@ export async function loadSocialConnections(
       users: [],
       blockedByPolicy,
       error: blockedByPolicy ? mapRlsError(mode) : mapLoadError(mode),
+      errorCode: relationError.code,
+      errorMessage: relationError.message,
+      errorStage: "relation",
+      isTransientFailure: isTransientFailure(relationError.code, relationError.message),
     };
   }
 
@@ -132,6 +160,10 @@ export async function loadSocialConnections(
       users: [],
       blockedByPolicy,
       error: blockedByPolicy ? mapRlsError(mode) : mapLoadError(mode),
+      errorCode: profilesError.code,
+      errorMessage: profilesError.message,
+      errorStage: "profiles",
+      isTransientFailure: isTransientFailure(profilesError.code, profilesError.message),
     };
   }
 

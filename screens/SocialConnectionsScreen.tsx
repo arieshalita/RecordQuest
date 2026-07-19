@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   FlatList,
   Image,
   Pressable,
@@ -21,6 +22,7 @@ type SocialConnectionsScreenProps = {
   viewedUserId: string;
   viewedDisplayName: string;
   currentUserId: string | null;
+  isAuthLoading: boolean;
   onBack: () => void;
   onOpenUser: (user: SocialConnectionUser) => void;
 };
@@ -30,6 +32,7 @@ export function SocialConnectionsScreen({
   viewedUserId,
   viewedDisplayName,
   currentUserId,
+  isAuthLoading,
   onBack,
   onOpenUser,
 }: SocialConnectionsScreenProps) {
@@ -38,46 +41,203 @@ export function SocialConnectionsScreen({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [actionLoadingByUserId, setActionLoadingByUserId] = useState<Record<string, boolean>>({});
+  const requestIdRef = useRef(0);
+  const inFlightRef = useRef(false);
+  const pendingRefreshRef = useRef(false);
+  const hasSuccessfulLoadRef = useRef(false);
+  const usersRef = useRef<SocialConnectionUser[]>([]);
 
   const title = mode === "followers" ? "Followers" : "Following";
   const emptyMessage = mode === "followers" ? "No followers yet" : "Not following anyone yet";
   const subtitle = `${viewedDisplayName} • ${title}`;
+  const resolvedViewedUserId = viewedUserId.trim();
+  const isAuthReady = !isAuthLoading;
+  const hasTargetUser = resolvedViewedUserId.length > 0;
+  const hasCurrentUser = Boolean(currentUserId?.trim());
+
+  useEffect(() => {
+    usersRef.current = users;
+  }, [users]);
 
   const loadConnections = useCallback(
-    async (refresh = false) => {
-      if (!viewedUserId.trim()) {
-        setUsers([]);
-        setErrorMessage(mode === "followers" ? "Followers unavailable." : "Following unavailable.");
-        setIsLoading(false);
-        setIsRefreshing(false);
+    async (options?: { refresh?: boolean; source?: string; allowAutoRetry?: boolean }) => {
+      const refresh = options?.refresh ?? false;
+      const source = options?.source ?? "automatic";
+      const allowAutoRetry = options?.allowAutoRetry ?? true;
+
+      if (!isAuthReady) {
+        if (__DEV__) {
+          console.log("[RecordQuest][social-screen] waiting for auth", {
+            mode,
+            source,
+            authReady: false,
+            hasViewedUserId: hasTargetUser,
+            hasCurrentUser,
+          });
+        }
         return;
       }
 
-      if (refresh) {
+      if (!hasCurrentUser) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+        setUsers([]);
+        setErrorMessage("You must be signed in to view this list.");
+        return;
+      }
+
+      if (!hasTargetUser) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+        setUsers([]);
+        setErrorMessage("This profile is unavailable right now.");
+        return;
+      }
+
+      if (inFlightRef.current) {
+        pendingRefreshRef.current = pendingRefreshRef.current || refresh;
+        if (__DEV__) {
+          console.log("[RecordQuest][social-screen] skipping overlapping load", {
+            mode,
+            source,
+            requestedRefresh: refresh,
+          });
+        }
+        return;
+      }
+
+      inFlightRef.current = true;
+      const requestId = requestIdRef.current + 1;
+      requestIdRef.current = requestId;
+
+      const shouldShowRefreshingState = refresh || hasSuccessfulLoadRef.current;
+
+      if (shouldShowRefreshingState) {
         setIsRefreshing(true);
       } else {
         setIsLoading(true);
       }
 
-      setErrorMessage(null);
-
-      const result = await loadSocialConnections(viewedUserId, mode, currentUserId, 150);
-
-      if (result.error) {
-        setUsers([]);
-        setErrorMessage(result.error);
-      } else {
-        setUsers(result.users);
+      if (!hasSuccessfulLoadRef.current) {
+        setErrorMessage(null);
       }
 
-      setIsLoading(false);
-      setIsRefreshing(false);
+      let attempt = 1;
+      const maxAttempts = allowAutoRetry ? 2 : 1;
+      let finalError: string | null = null;
+      let requestSucceeded = false;
+
+      while (attempt <= maxAttempts) {
+        if (__DEV__) {
+          console.log("[RecordQuest][social-screen] load attempt", {
+            mode,
+            source,
+            attempt,
+            authReady: isAuthReady,
+            hasViewedUserId: hasTargetUser,
+            hasCurrentUser,
+          });
+        }
+
+        const result = await loadSocialConnections(resolvedViewedUserId, mode, currentUserId, 150);
+
+        if (requestId !== requestIdRef.current) {
+          if (__DEV__) {
+            console.log("[RecordQuest][social-screen] stale request ignored", {
+              mode,
+              requestId,
+              latestRequestId: requestIdRef.current,
+            });
+          }
+          inFlightRef.current = false;
+          return;
+        }
+
+        if (!result.error) {
+          setUsers(result.users);
+          setErrorMessage(null);
+          hasSuccessfulLoadRef.current = true;
+          requestSucceeded = true;
+
+          if (__DEV__) {
+            console.log("[RecordQuest][social-screen] load success", {
+              mode,
+              source,
+              attempt,
+              resultCount: result.users.length,
+            });
+          }
+
+          break;
+        }
+
+        finalError = result.error;
+
+        if (__DEV__) {
+          console.log("[RecordQuest][social-screen] load failure", {
+            mode,
+            source,
+            attempt,
+            stage: result.errorStage ?? "unknown",
+            code: result.errorCode ?? "none",
+            message: result.errorMessage ?? result.error,
+            transient: Boolean(result.isTransientFailure),
+          });
+        }
+
+        if (!result.isTransientFailure || attempt >= maxAttempts) {
+          break;
+        }
+
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 450);
+        });
+
+        attempt += 1;
+      }
+
+      if (!requestSucceeded && requestId === requestIdRef.current) {
+        if (!hasSuccessfulLoadRef.current) {
+          setUsers([]);
+          setErrorMessage(finalError ?? (mode === "followers" ? "Followers unavailable." : "Following unavailable."));
+        }
+      }
+
+      if (requestId === requestIdRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+
+      inFlightRef.current = false;
+
+      if (pendingRefreshRef.current) {
+        pendingRefreshRef.current = false;
+        void loadConnections({ refresh: true, source: "queued", allowAutoRetry: false });
+      }
     },
-    [currentUserId, mode, viewedUserId]
+    [currentUserId, hasCurrentUser, hasTargetUser, isAuthReady, mode, resolvedViewedUserId]
   );
 
   useEffect(() => {
-    void loadConnections(false);
+    void loadConnections({ refresh: false, source: "initial", allowAutoRetry: true });
+  }, [loadConnections]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") {
+        return;
+      }
+
+      void loadConnections({
+        refresh: hasSuccessfulLoadRef.current,
+        source: "app-active",
+        allowAutoRetry: true,
+      });
+    });
+
+    return () => {
+      subscription.remove();
+    };
   }, [loadConnections]);
 
   const refreshDisabled = isLoading || isRefreshing;
@@ -128,7 +288,7 @@ export function SocialConnectionsScreen({
         back={onBack}
         rightIcon="↻"
         rightAction={() => {
-          void loadConnections(true);
+          void loadConnections({ refresh: true, source: "manual-refresh", allowAutoRetry: true });
         }}
         rightActionLabel="Refresh social list"
         rightActionDisabled={refreshDisabled}
@@ -151,7 +311,7 @@ export function SocialConnectionsScreen({
           <Pressable
             style={styles.retryButton}
             onPress={() => {
-              void loadConnections(true);
+              void loadConnections({ refresh: true, source: "manual-retry", allowAutoRetry: true });
             }}
             disabled={refreshDisabled}
           >

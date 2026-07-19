@@ -125,7 +125,7 @@ const ALBUM_TYPEAHEAD_DEBOUNCE_MS = 380;
 
 export default function App() {
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, isLoading: isAuthLoading } = useAuth();
   const [screen, setScreen] = useState("Home");
   const [records, setRecords] = useState<RecordItem[]>(starterRecords);
   const [wishlist, setWishlist] = useState<RecordItem[]>([]);
@@ -1451,6 +1451,7 @@ export default function App() {
           viewedUserId={socialListViewedUserId}
           viewedDisplayName={socialListViewedDisplayName}
           currentUserId={user?.id ?? null}
+          isAuthLoading={isAuthLoading}
           onOpenUser={(socialUser: SocialConnectionUser) => {
             setSelectedProfileUserId(socialUser.userId);
             setSelectedProfileDisplayName(socialUser.displayName);
