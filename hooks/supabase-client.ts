@@ -142,6 +142,35 @@ export async function signUpWithEmail(
   }
 }
 
+export async function resendSignupConfirmationEmail(email: string): Promise<AuthResponse> {
+  try {
+    const { data, error } = await supabase.auth.resend({
+      type: "signup",
+      email: email.trim(),
+      options: {
+        emailRedirectTo: getAuthRedirectUrl("auth/callback"),
+      },
+    });
+
+    if (error) {
+      logAuthError("resendSignupConfirmationEmail", error);
+      return { success: false, error: error.message };
+    }
+
+    return {
+      success: true,
+      user: data.user,
+      session: data.session,
+    };
+  } catch (err: unknown) {
+    logAuthError("resendSignupConfirmationEmail", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown resend confirmation error",
+    };
+  }
+}
+
 /**
  * PLACEHOLDER: Sign in with email and password
  * 

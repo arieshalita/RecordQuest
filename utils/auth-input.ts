@@ -30,6 +30,10 @@ export function mapSignInErrorMessage(error: string | null | undefined): string 
   return "Could not sign in right now. Please try again.";
 }
 
+export function isEmailNotConfirmedError(error: string | null | undefined): boolean {
+  return (error ?? "").toLowerCase().includes("email not confirmed");
+}
+
 export function mapSignUpErrorMessage(error: string | null | undefined): string {
   const source = (error ?? "").toLowerCase();
 

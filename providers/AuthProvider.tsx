@@ -13,6 +13,7 @@ import {
   getCurrentSession,
   onAuthStateChange,
   signInWithEmail,
+  resendSignupConfirmationEmail,
   signOut as supabaseSignOut,
   signUpWithEmail,
   type AuthResponse,
@@ -24,6 +25,7 @@ interface AuthContextValue {
   isLoading: boolean;
   signIn: (email: string, password: string, staySignedIn: boolean) => Promise<AuthResponse>;
   signUp: (email: string, password: string) => Promise<AuthResponse>;
+  resendConfirmationEmail: (email: string) => Promise<AuthResponse>;
   signOut: () => Promise<AuthResponse>;
 }
 
@@ -148,6 +150,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
         } else if (result.success) {
           setSession(null);
           setUser(null);
+        }
+
+        return result;
+      },
+      resendConfirmationEmail: async (email: string) => {
+        const result = await resendSignupConfirmationEmail(email);
+
+        if (!result.success && __DEV__) {
+          console.warn("[RecordQuest][auth] resendConfirmationEmail failed:", result.error ?? "unknown error");
         }
 
         return result;

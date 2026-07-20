@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -10,18 +10,31 @@ import {
 import { router } from "expo-router";
 import { AuthScreenShell } from "../../components/auth/AuthScreenShell";
 import { useAuth } from "../../providers/AuthProvider";
-import { isValidEmail, mapSignInErrorMessage, normalizeEmail } from "../../utils/auth-input";
+import {
+  isEmailNotConfirmedError,
+  isValidEmail,
+  mapSignInErrorMessage,
+  normalizeEmail,
+} from "../../utils/auth-input";
 
 export default function SignInScreen() {
-  const { signIn } = useAuth();
+  const { signIn, resendConfirmationEmail } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [staySignedIn, setStaySignedIn] = useState(true);
   const [error, setError] = useState("");
+  const [rawSignInError, setRawSignInError] = useState<string | null>(null);
+  const [resendMessage, setResendMessage] = useState("");
+  const [resendError, setResendError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isResending, setIsResending] = useState(false);
+  const resendInFlightRef = useRef(false);
 
   async function handleSignIn() {
     setError("");
+    setRawSignInError(null);
+    setResendMessage("");
+    setResendError("");
 
     const normalizedEmail = normalizeEmail(email);
     const trimmedPassword = password.trim();
@@ -48,10 +61,12 @@ export default function SignInScreen() {
       const result = await signIn(normalizedEmail, trimmedPassword, staySignedIn);
 
       if (!result.success) {
+        setRawSignInError(result.error ?? null);
         setError(mapSignInErrorMessage(result.error));
         return;
       }
 
+      setRawSignInError(null);
       if (result.session) {
         router.replace("/(tabs)");
         return;
@@ -63,9 +78,40 @@ export default function SignInScreen() {
     }
   }
 
+  async function handleResendConfirmationEmail() {
+    if (resendInFlightRef.current || isResending) {
+      return;
+    }
+
+    const normalizedEmail = normalizeEmail(email);
+    if (!isEmailNotConfirmedError(rawSignInError) || !isValidEmail(normalizedEmail)) {
+      return;
+    }
+
+    resendInFlightRef.current = true;
+    setIsResending(true);
+    setResendError("");
+    setResendMessage("");
+
+    try {
+      const result = await resendConfirmationEmail(normalizedEmail);
+
+      if (!result.success) {
+        setResendError("Could not resend confirmation email right now. Please try again.");
+        return;
+      }
+
+      setResendMessage("Confirmation email sent. Check your inbox and open the newest email.");
+    } finally {
+      resendInFlightRef.current = false;
+      setIsResending(false);
+    }
+  }
+
   const normalizedEmail = normalizeEmail(email);
   const trimmedPassword = password.trim();
   const canSubmit = isValidEmail(normalizedEmail) && trimmedPassword.length >= 8;
+  const showResendConfirmationAction = isEmailNotConfirmedError(rawSignInError) && isValidEmail(normalizedEmail);
 
   return (
     <AuthScreenShell
@@ -118,6 +164,27 @@ export default function SignInScreen() {
       </Pressable>
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+      {showResendConfirmationAction ? (
+        <View style={styles.resendCard}>
+          <Text style={styles.resendText}>
+            Didn&apos;t get the confirmation email? Send a fresh copy to the address above.
+          </Text>
+          <Pressable
+            style={[styles.resendButton, isResending ? styles.disabledButton : null]}
+            onPress={handleResendConfirmationEmail}
+            disabled={isResending}
+          >
+            {isResending ? (
+              <ActivityIndicator size="small" color="#FFF4D6" />
+            ) : (
+              <Text style={styles.resendButtonText}>Resend confirmation email</Text>
+            )}
+          </Pressable>
+          {resendMessage ? <Text style={styles.resendSuccessText}>{resendMessage}</Text> : null}
+          {resendError ? <Text style={styles.resendErrorText}>{resendError}</Text> : null}
+        </View>
+      ) : null}
 
       <Pressable
         style={[styles.primaryButton, (isSubmitting || !canSubmit) ? styles.disabledButton : null]}
@@ -199,6 +266,44 @@ const styles = StyleSheet.create({
     color: "#F59E0B",
     marginBottom: 12,
     fontSize: 13,
+  },
+  resendCard: {
+    marginBottom: 12,
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.28)",
+    backgroundColor: "rgba(18, 16, 34, 0.92)",
+    gap: 10,
+  },
+  resendText: {
+    color: "#C4BEE0",
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  resendButton: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(124, 58, 237, 0.22)",
+    borderWidth: 1,
+    borderColor: "rgba(167, 139, 250, 0.5)",
+  },
+  resendButtonText: {
+    color: "#F4EDFF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  resendSuccessText: {
+    color: "#C7F9CC",
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  resendErrorText: {
+    color: "#F59E0B",
+    fontSize: 13,
+    lineHeight: 18,
   },
   primaryButton: {
     marginTop: 4,
