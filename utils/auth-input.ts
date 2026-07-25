@@ -37,6 +37,10 @@ export function isEmailNotConfirmedError(error: string | null | undefined): bool
 export function mapSignUpErrorMessage(error: string | null | undefined): string {
   const source = (error ?? "").toLowerCase();
 
+  if (source.includes("username") && (source.includes("taken") || source.includes("exists") || source.includes("duplicate") || source.includes("unique"))) {
+    return "That username is already taken. Try another one.";
+  }
+
   if (source.includes("already registered") || source.includes("already been registered")) {
     return "An account with this email already exists. Try signing in instead.";
   }

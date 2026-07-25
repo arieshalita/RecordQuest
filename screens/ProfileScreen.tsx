@@ -320,6 +320,13 @@ export function ProfileScreen({
   const [showInsights, setShowInsights] = useState(false);
   const [profileIdentityUserId, setProfileIdentityUserId] = useState<string | null>(null);
   const saveIdentityInFlightRef = useRef(false);
+  const activeTargetUserIdRef = useRef<string | null>(targetUserId ?? null);
+  const followMetaRequestIdRef = useRef(0);
+  const profileIdentityRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    activeTargetUserIdRef.current = targetUserId ?? null;
+  }, [targetUserId]);
 
   const ownProfileFallbackName = useMemo(() => {
     const metadataDisplayName = typeof user?.user_metadata?.display_name === "string"
@@ -433,6 +440,9 @@ export function ProfileScreen({
   }
 
   const refreshFollowMeta = useCallback(async () => {
+    const requestId = followMetaRequestIdRef.current + 1;
+    followMetaRequestIdRef.current = requestId;
+
     if (!targetUserId) {
       setFollowerCount(0);
       setFollowingCount(0);
@@ -454,12 +464,33 @@ export function ProfileScreen({
         isOwnProfile ? Promise.resolve(false) : isFollowing(targetUserId),
       ]);
 
+      if (
+        requestId !== followMetaRequestIdRef.current ||
+        targetUserId !== activeTargetUserIdRef.current
+      ) {
+        return;
+      }
+
       setFollowerCount(followers);
       setFollowingCount(following);
       setFollowingState(amFollowing);
     } catch {
+      if (
+        requestId !== followMetaRequestIdRef.current ||
+        targetUserId !== activeTargetUserIdRef.current
+      ) {
+        return;
+      }
+
       setFollowError("Could not load follow details.");
     } finally {
+      if (
+        requestId !== followMetaRequestIdRef.current ||
+        targetUserId !== activeTargetUserIdRef.current
+      ) {
+        return;
+      }
+
       setIsFollowMetaLoading(false);
     }
   }, [isOwnProfile, targetUserId]);
@@ -469,6 +500,9 @@ export function ProfileScreen({
   }, [refreshFollowMeta]);
 
   const refreshProfileIdentity = useCallback(async () => {
+    const requestId = profileIdentityRequestIdRef.current + 1;
+    profileIdentityRequestIdRef.current = requestId;
+
     if (!targetUserId) {
       setProfileUsername("");
       setProfileDisplayNameState("");
@@ -496,6 +530,13 @@ export function ProfileScreen({
       const profile = await getProfileIdentity(targetUserId);
       const fallbackName = isOwnProfile ? ownProfileFallbackName : profileDisplayName ?? "Collector";
 
+      if (
+        requestId !== profileIdentityRequestIdRef.current ||
+        targetUserId !== activeTargetUserIdRef.current
+      ) {
+        return;
+      }
+
       setProfileDisplayNameState(profile?.displayName ?? fallbackName);
       setProfileUsername(profile?.username ?? "");
       setProfileBio(profile?.bio ?? "");
@@ -507,6 +548,13 @@ export function ProfileScreen({
         setBioDraft(profile?.bio ?? "");
       }
     } finally {
+      if (
+        requestId !== profileIdentityRequestIdRef.current ||
+        targetUserId !== activeTargetUserIdRef.current
+      ) {
+        return;
+      }
+
       setIsProfileIdentityLoading(false);
     }
   }, [isOwnProfile, ownProfileFallbackName, profileDisplayName, targetUserId]);

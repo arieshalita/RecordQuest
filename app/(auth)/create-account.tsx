@@ -9,28 +9,43 @@ import {
 } from "react-native";
 import { router } from "expo-router";
 import { AuthScreenShell } from "../../components/auth/AuthScreenShell";
+import {
+  sanitizeUsername,
+  validateUsername,
+} from "../../hooks/profile-identity";
 import { useAuth } from "../../providers/AuthProvider";
 import { isValidEmail, mapSignUpErrorMessage, normalizeEmail } from "../../utils/auth-input";
 
 export default function CreateAccountScreen() {
   const { signUp } = useAuth();
   const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const normalizedUsername = sanitizeUsername(username);
+  const usernameValidationError = validateUsername(normalizedUsername);
+
   async function handleCreateAccount() {
     setError("");
     setSuccessMessage("");
 
     const normalizedEmail = normalizeEmail(email);
+    const normalizedSignupUsername = sanitizeUsername(username);
     const trimmedPassword = password.trim();
     const trimmedConfirmPassword = confirmPassword.trim();
 
-    if (!normalizedEmail || !trimmedPassword || !trimmedConfirmPassword) {
+    if (!normalizedEmail || !normalizedSignupUsername || !trimmedPassword || !trimmedConfirmPassword) {
       setError("Complete all fields to continue.");
+      return;
+    }
+
+    const usernameError = validateUsername(normalizedSignupUsername);
+    if (usernameError) {
+      setError(usernameError);
       return;
     }
 
@@ -50,12 +65,23 @@ export default function CreateAccountScreen() {
     }
 
     setEmail(normalizedEmail);
+    setUsername(normalizedSignupUsername);
 
     setIsSubmitting(true);
     try {
-      const result = await signUp(normalizedEmail, trimmedPassword);
+      const result = await signUp(normalizedEmail, trimmedPassword, normalizedSignupUsername);
 
       if (!result.success) {
+        if (result.usernameSetupRequired) {
+          if (result.session) {
+            router.replace("/choose-username");
+            return;
+          }
+
+          setError(result.error ?? "We couldn't finish setting up your username. Please choose another one and try again.");
+          return;
+        }
+
         setError(mapSignUpErrorMessage(result.error));
         return;
       }
@@ -74,12 +100,29 @@ export default function CreateAccountScreen() {
   }
 
   const normalizedEmail = normalizeEmail(email);
+  const normalizedUsernameForSubmit = sanitizeUsername(username);
   const trimmedPassword = password.trim();
   const trimmedConfirmPassword = confirmPassword.trim();
+  const usernameReadyForSubmit =
+    Boolean(normalizedUsernameForSubmit) &&
+    !usernameValidationError;
   const canSubmit =
+    usernameReadyForSubmit &&
     isValidEmail(normalizedEmail) &&
     trimmedPassword.length >= 8 &&
     trimmedPassword === trimmedConfirmPassword;
+
+  const showUsernameHint = Boolean(username) || Boolean(usernameValidationError);
+
+  const usernameStatusText = usernameValidationError
+    ? usernameValidationError
+    : showUsernameHint
+      ? "Usernames must be 3-24 chars: lowercase letters, numbers, underscores, and periods."
+      : "";
+
+  const usernameStatusStyle = usernameValidationError
+    ? styles.errorText
+    : styles.helperText;
 
   return (
     <AuthScreenShell
@@ -104,6 +147,22 @@ export default function CreateAccountScreen() {
           style={styles.input}
         />
       </View>
+
+      <View style={styles.fieldGroup}>
+        <Text style={styles.label}>Username</Text>
+        <TextInput
+          value={username}
+          onChangeText={setUsername}
+          autoCapitalize="none"
+          autoCorrect={false}
+          textContentType="username"
+          placeholder="your_username"
+          placeholderTextColor="#8B8B96"
+          style={styles.input}
+        />
+      </View>
+
+      {usernameStatusText ? <Text style={usernameStatusStyle}>{usernameStatusText}</Text> : null}
 
       <View style={styles.fieldGroup}>
         <Text style={styles.label}>Password</Text>
@@ -178,6 +237,12 @@ const styles = StyleSheet.create({
     color: "#C4BEE0",
     marginBottom: 12,
     fontSize: 13,
+  },
+  helperText: {
+    color: "#AFA9D6",
+    marginTop: -6,
+    marginBottom: 12,
+    fontSize: 12,
   },
   primaryButton: {
     marginTop: 4,

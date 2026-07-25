@@ -163,6 +163,8 @@ export default function App() {
   const [storeCheckInError, setStoreCheckInError] = useState<string | null>(null);
   const [recordStateSource, setRecordStateSource] = useState<"cloud" | "local">("local");
   const [loaded, setLoaded] = useState(false);
+  const [dataLoadError, setDataLoadError] = useState<string | null>(null);
+  const [dataReloadNonce, setDataReloadNonce] = useState(0);
   const [showPurchaseModal, setShowPurchaseModal] = useState(false);
   const [discoverUsers, setDiscoverUsers] = useState<DiscoverUser[]>([]);
   const [discoverSearchText, setDiscoverSearchText] = useState("");
@@ -202,6 +204,10 @@ export default function App() {
   const suppressNextTypeaheadRef = useRef(false);
   const latestAlbumSearchRequestRef = useRef(0);
   const achievementEarnedAtInFlightRef = useRef(new Set<string>());
+  const activeAuthUserIdRef = useRef<string | null>(user?.id ?? null);
+  const dataLoadRequestIdRef = useRef(0);
+  const saveRequestIdRef = useRef(0);
+  const followingFeedRequestIdRef = useRef(0);
   const detailOpenRequestIdRef = useRef(0);
   const detailOpenStartedAtRef = useRef<number | null>(null);
   const detailRecordVisibleLoggedRequestIdRef = useRef<number | null>(null);
@@ -264,6 +270,10 @@ export default function App() {
   }, [storeCheckIns, stores, storesViewMode]);
 
   useEffect(() => {
+    activeAuthUserIdRef.current = user?.id ?? null;
+  }, [user?.id]);
+
+  useEffect(() => {
     const nextUserId = user?.id ?? null;
 
     if (lastAuthenticatedUserIdRef.current === nextUserId) {
@@ -271,6 +281,40 @@ export default function App() {
     }
 
     lastAuthenticatedUserIdRef.current = nextUserId;
+    followingFeedRequestIdRef.current += 1;
+    dataLoadRequestIdRef.current += 1;
+    saveRequestIdRef.current += 1;
+    setLoaded(false);
+    setDataLoadError(null);
+
+    // Clear all user-scoped state immediately to avoid cross-account bleed.
+    setRecords([]);
+    setWishlist([]);
+    setActivity([]);
+    setStoreCheckIns({});
+    setRecordStateSource(nextUserId ? "cloud" : "local");
+    setAchievementEarnedAtById({});
+    achievementEarnedAtInFlightRef.current.clear();
+    hasLoadedFollowingFeedRef.current = false;
+    lastFollowingFeedLoadRef.current = 0;
+    setFollowingActivity([]);
+    setFollowingActivityError(null);
+    setIsFollowingActivityLoading(false);
+    setIsFollowingActivityRefreshing(false);
+    setDiscoverUsers([]);
+    setDiscoverUsersError(null);
+    setIsDiscoverUsersLoading(false);
+
+    setAlbum("");
+    setArtist("");
+    setSelectedMetadata(null);
+    setSearchResults([]);
+    setSearchMessage("");
+    setAddFormMessage("");
+
+    setRecordDraft({});
+    setIsEditingRecord(false);
+    setDetailSource(null);
     setSelectedProfileUserId(null);
     setSelectedProfileDisplayName(null);
     setProfileBackScreen("Home");
@@ -286,11 +330,18 @@ export default function App() {
     setPublicCollectionBackProfileUserId(null);
     setPublicCollectionBackProfileDisplayName(null);
     setDiscoverSearchText("");
+    setRecordBeingPromoted(null);
     setSelectedRecordId(null);
     setSelectedRecordSnapshot(null);
     setDetailStore(null);
     setScreen("Home");
   }, [user?.id]);
+
+  const retryInitialDataLoad = useCallback(() => {
+    setDataLoadError(null);
+    setLoaded(false);
+    setDataReloadNonce((current) => current + 1);
+  }, []);
 
   const loadNearbyStores = useCallback(async (invalidateCacheForCurrentLocation: boolean) => {
     console.log("[RecordQuest][stores] loading started", {
@@ -339,6 +390,8 @@ export default function App() {
   }, [isLoadingStores, loadNearbyStores]);
 
   useEffect(() => {
+    const requestId = dataLoadRequestIdRef.current + 1;
+    dataLoadRequestIdRef.current = requestId;
     let isMounted = true;
 
     async function loadData() {
@@ -364,13 +417,14 @@ export default function App() {
       // }
       const savedState = await loadRecordQuestState(initialState);
 
-      if (!isMounted) return;
+      if (!isMounted || requestId !== dataLoadRequestIdRef.current) return;
 
       setRecords(savedState.records);
       setWishlist(savedState.wishlist);
       setActivity(savedState.activity);
       setStoreCheckIns(savedState.storeCheckIns);
       setRecordStateSource(savedState.source);
+      setDataLoadError(savedState.loadError ?? null);
       didHydrateRef.current = false;
       setLoaded(true);
     }
@@ -380,22 +434,29 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [user]);
+  }, [user?.id, dataReloadNonce]);
 
   useEffect(() => {
     if (!loaded) return;
+    if (dataLoadError) return;
 
     if (!didHydrateRef.current) {
       didHydrateRef.current = true;
       return;
     }
 
+    saveRequestIdRef.current += 1;
+    const expectedUserId = activeAuthUserIdRef.current;
+
     // TODO: Accounts Phase – Data Persistence & Sync
     // This will now also sync to Supabase if authenticated:
     // await saveRecordQuestState({ records, wishlist, activity, storeCheckIns });
     // (Also triggers background cloud sync in saveRecordQuestState)
-    saveRecordQuestState({ records, wishlist, activity, storeCheckIns });
-  }, [records, wishlist, activity, storeCheckIns, loaded]);
+    void saveRecordQuestState(
+      { records, wishlist, activity, storeCheckIns },
+      { expectedUserId }
+    );
+  }, [records, wishlist, activity, storeCheckIns, loaded, dataLoadError]);
 
   useEffect(() => {
     let isMounted = true;
@@ -664,6 +725,7 @@ export default function App() {
   const loadFollowingFeed = useCallback(
     async (forceRefresh = false) => {
       if (!user?.id) {
+        followingFeedRequestIdRef.current += 1;
         setFollowingActivity([]);
         setFollowingActivityError("You must be signed in to see activity.");
         setIsFollowingActivityLoading(false);
@@ -672,6 +734,10 @@ export default function App() {
         lastFollowingFeedLoadRef.current = 0;
         return;
       }
+
+      const expectedUserId = user.id;
+      const requestId = followingFeedRequestIdRef.current + 1;
+      followingFeedRequestIdRef.current = requestId;
 
       const now = Date.now();
       const isCooldownActive =
@@ -695,13 +761,34 @@ export default function App() {
       try {
         const result = await loadFollowingActivity(25);
 
+        if (
+          requestId !== followingFeedRequestIdRef.current ||
+          expectedUserId !== activeAuthUserIdRef.current
+        ) {
+          return;
+        }
+
         setFollowingActivity(result.items);
         setFollowingActivityError(result.error ?? null);
         hasLoadedFollowingFeedRef.current = true;
         lastFollowingFeedLoadRef.current = Date.now();
       } catch {
+        if (
+          requestId !== followingFeedRequestIdRef.current ||
+          expectedUserId !== activeAuthUserIdRef.current
+        ) {
+          return;
+        }
+
         setFollowingActivityError("Activity unavailable.");
       } finally {
+        if (
+          requestId !== followingFeedRequestIdRef.current ||
+          expectedUserId !== activeAuthUserIdRef.current
+        ) {
+          return;
+        }
+
         setIsFollowingActivityLoading(false);
         setIsFollowingActivityRefreshing(false);
       }
@@ -1237,6 +1324,20 @@ export default function App() {
         <View style={styles.cloudLoadingContainer}>
           <ActivityIndicator size="large" color="#A78BFA" />
           <Text style={styles.cloudLoadingText}>Loading your collection...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (dataLoadError) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" />
+        <View style={styles.cloudLoadingContainer}>
+          <Text style={styles.cloudLoadingText}>{dataLoadError}</Text>
+          <Pressable style={styles.cloudRetryButton} onPress={retryInitialDataLoad}>
+            <Text style={styles.cloudRetryButtonText}>Retry</Text>
+          </Pressable>
         </View>
       </SafeAreaView>
     );

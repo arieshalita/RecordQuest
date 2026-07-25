@@ -61,6 +61,16 @@ export default function SignInScreen() {
       const result = await signIn(normalizedEmail, trimmedPassword, staySignedIn);
 
       if (!result.success) {
+        if (result.usernameSetupRequired && result.session) {
+          router.replace("/choose-username");
+          return;
+        }
+
+        if (result.usernameSetupRequired) {
+          setError(result.error ?? "We couldn't finish setting up your username. Please choose another username.");
+          return;
+        }
+
         setRawSignInError(result.error ?? null);
         setError(mapSignInErrorMessage(result.error));
         return;

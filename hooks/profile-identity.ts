@@ -1,4 +1,5 @@
 import { supabase } from "./supabase-client";
+import type { User } from "@supabase/supabase-js";
 
 export type PublicProfileIdentity = {
   userId: string;
@@ -14,8 +15,17 @@ export type SaveProfileIdentityResult = {
   profile?: PublicProfileIdentity;
 };
 
+export type EnsureOwnProfileFromAuthResult = {
+  success: boolean;
+  usernameSetupRequired: boolean;
+  status: "ready" | "username-required" | "temporary-error" | "auth-invalid";
+  error?: string;
+  profile?: PublicProfileIdentity;
+};
+
 const USERNAME_MIN_LENGTH = 3;
 const USERNAME_MAX_LENGTH = 24;
+export const USERNAME_PATTERN = /^[a-z0-9._]{3,24}$/;
 
 function readString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -37,6 +47,33 @@ function mapRowToIdentity(row: Record<string, unknown>): PublicProfileIdentity |
     avatarUrl,
     bio,
   };
+}
+
+function fallbackDisplayNameFromUser(user: User): string {
+  const metadataDisplayName =
+    typeof user.user_metadata?.display_name === "string"
+      ? user.user_metadata.display_name.trim()
+      : "";
+
+  if (metadataDisplayName) {
+    return metadataDisplayName;
+  }
+
+  const metadataUsername =
+    typeof user.user_metadata?.username === "string"
+      ? sanitizeUsername(user.user_metadata.username)
+      : "";
+
+  if (metadataUsername) {
+    return metadataUsername;
+  }
+
+  const emailLocal = typeof user.email === "string" ? user.email.split("@")[0]?.trim() : "";
+  if (emailLocal) {
+    return emailLocal;
+  }
+
+  return "RecordQuest User";
 }
 
 function genericProfileSaveError(): SaveProfileIdentityResult {
@@ -92,19 +129,297 @@ export function sanitizeUsername(input: string): string {
 }
 
 export function validateUsername(username: string): string | null {
-  if (username.length < USERNAME_MIN_LENGTH) {
-    return "Username must be at least 3 characters.";
-  }
+  if (!USERNAME_PATTERN.test(username)) {
+    if (username.length < USERNAME_MIN_LENGTH) {
+      return "Username must be at least 3 characters.";
+    }
 
-  if (username.length > USERNAME_MAX_LENGTH) {
-    return "Username must be 24 characters or fewer.";
-  }
+    if (username.length > USERNAME_MAX_LENGTH) {
+      return "Username must be 24 characters or fewer.";
+    }
 
-  if (!/^[a-z0-9._]+$/.test(username)) {
-    return "Username can only use letters, numbers, underscores, and periods.";
+    return "Username can only use lowercase letters, numbers, underscores, and periods.";
   }
 
   return null;
+}
+
+export async function ensureOwnProfileFromAuthMetadata(): Promise<EnsureOwnProfileFromAuthResult> {
+  const { data, error } = await supabase.auth.getUser();
+
+  if (error || !data.user) {
+    return {
+      success: false,
+      usernameSetupRequired: false,
+      status: "auth-invalid",
+      error: "You must be signed in to continue.",
+    };
+  }
+
+  const authUser = data.user;
+  const authUserId = authUser.id.trim();
+
+  const metadataUsernameRaw =
+    typeof authUser.user_metadata?.username === "string"
+      ? authUser.user_metadata.username
+      : "";
+  const metadataUsername = sanitizeUsername(metadataUsernameRaw);
+  const metadataUsernameError = metadataUsername ? validateUsername(metadataUsername) : "Username is required.";
+  const fallbackDisplayName = fallbackDisplayNameFromUser(authUser);
+
+  const existingLookup = await supabase
+    .from("profiles")
+    .select("id,user_id,username,display_name,avatar_url,bio")
+    .eq("user_id", authUserId)
+    .maybeSingle();
+
+  if (existingLookup.error) {
+    return {
+      success: false,
+      usernameSetupRequired: false,
+      status: "temporary-error",
+      error: "We couldn't load your profile right now. Please try again.",
+    };
+  }
+
+  const existingProfile =
+    existingLookup.data && typeof existingLookup.data === "object"
+      ? mapRowToIdentity(existingLookup.data as Record<string, unknown>)
+      : null;
+
+  const existingUsernameError = existingProfile?.username ? validateUsername(existingProfile.username) : "missing";
+  if (existingProfile?.username && !existingUsernameError) {
+    return {
+      success: true,
+      usernameSetupRequired: false,
+      status: "ready",
+      profile: existingProfile,
+    };
+  }
+
+  if (metadataUsernameError) {
+    return {
+      success: false,
+      usernameSetupRequired: true,
+      status: "username-required",
+      error: "We couldn't finish setting up your username. Please choose a valid username and try again.",
+      profile: existingProfile ?? undefined,
+    };
+  }
+
+  const ensureRowResult = await supabase
+    .from("profiles")
+    .upsert(
+      {
+        user_id: authUserId,
+        display_name: existingProfile?.displayName || fallbackDisplayName,
+        bio: existingProfile?.bio ?? "",
+      },
+      {
+        onConflict: "user_id",
+        ignoreDuplicates: true,
+      }
+    );
+
+  if (ensureRowResult.error) {
+    return {
+      success: false,
+      usernameSetupRequired: false,
+      status: "temporary-error",
+      error: "We couldn't initialize your profile right now. Please try again.",
+    };
+  }
+
+  const writeResult = await supabase
+    .from("profiles")
+    .update({
+      username: metadataUsername,
+    })
+    .eq("user_id", authUserId)
+    .or("username.is.null,username.eq.");
+
+  if (writeResult.error) {
+    if (writeResult.error.code === "23505" || /duplicate|unique/i.test(writeResult.error.message)) {
+      return {
+        success: false,
+        usernameSetupRequired: true,
+        status: "username-required",
+        error: "That username is already taken. Please choose another one.",
+        profile: existingProfile ?? undefined,
+      };
+    }
+
+    return {
+      success: false,
+      usernameSetupRequired: false,
+      status: "temporary-error",
+      error: "We couldn't initialize your profile right now. Please try again.",
+    };
+  }
+
+  const refreshedProfileResult = await supabase
+    .from("profiles")
+    .select("id,user_id,username,display_name,avatar_url,bio")
+    .eq("user_id", authUserId)
+    .maybeSingle();
+
+  if (refreshedProfileResult.error) {
+    return {
+      success: false,
+      usernameSetupRequired: false,
+      status: "temporary-error",
+      error: "We couldn't initialize your profile right now. Please try again.",
+    };
+  }
+
+  const profile =
+    refreshedProfileResult.data && typeof refreshedProfileResult.data === "object"
+      ? mapRowToIdentity(refreshedProfileResult.data as Record<string, unknown>) ?? undefined
+      : undefined;
+
+  if (!profile?.username) {
+    return {
+      success: false,
+      usernameSetupRequired: true,
+      status: "username-required",
+      error: "We couldn't finish setting up your username. Please try a different username.",
+      profile,
+    };
+  }
+
+  return {
+    success: true,
+    usernameSetupRequired: false,
+    status: "ready",
+    profile,
+  };
+}
+
+export async function completeOwnUsername(usernameInput: string): Promise<SaveProfileIdentityResult> {
+  const { data, error } = await supabase.auth.getUser();
+
+  if (error || !data.user) {
+    return {
+      success: false,
+      error: "You must be signed in to update your username.",
+    };
+  }
+
+  const authUser = data.user;
+  const authUserId = authUser.id.trim();
+  const normalizedUsername = sanitizeUsername(usernameInput);
+  const usernameError = validateUsername(normalizedUsername);
+
+  if (usernameError) {
+    return {
+      success: false,
+      error: usernameError,
+    };
+  }
+
+  const fallbackDisplayName = fallbackDisplayNameFromUser(authUser);
+
+  const existingLookup = await supabase
+    .from("profiles")
+    .select("id,user_id,username,display_name,avatar_url,bio")
+    .eq("user_id", authUserId)
+    .maybeSingle();
+
+  if (existingLookup.error) {
+    return genericProfileSaveError();
+  }
+
+  const existingProfile =
+    existingLookup.data && typeof existingLookup.data === "object"
+      ? mapRowToIdentity(existingLookup.data as Record<string, unknown>)
+      : null;
+
+  if (existingProfile?.username && !validateUsername(existingProfile.username)) {
+    return {
+      success: true,
+      profile: existingProfile,
+    };
+  }
+
+  const ensureRowResult = await supabase
+    .from("profiles")
+    .upsert(
+      {
+        user_id: authUserId,
+        display_name: existingProfile?.displayName || fallbackDisplayName,
+        bio: existingProfile?.bio ?? "",
+      },
+      {
+        onConflict: "user_id",
+        ignoreDuplicates: true,
+      }
+    );
+
+  if (ensureRowResult.error) {
+    return {
+      success: false,
+      error: "Could not update your username right now. Please try again.",
+    };
+  }
+
+  const writeResult = await supabase
+    .from("profiles")
+    .update({
+      username: normalizedUsername,
+    })
+    .eq("user_id", authUserId)
+    .or("username.is.null,username.eq.");
+
+  if (writeResult.error) {
+    if (writeResult.error.code === "23505" || /duplicate|unique/i.test(writeResult.error.message)) {
+      return {
+        success: false,
+        error: "That username is already taken. Please choose another.",
+      };
+    }
+
+    return {
+      success: false,
+      error: "Could not update your username right now. Please try again.",
+    };
+  }
+
+  const refreshedProfileResult = await supabase
+    .from("profiles")
+    .select("id,user_id,username,display_name,avatar_url,bio")
+    .eq("user_id", authUserId)
+    .maybeSingle();
+
+  if (refreshedProfileResult.error) {
+    return {
+      success: false,
+      error: "Could not confirm your username right now. Please try again.",
+    };
+  }
+
+  const profile =
+    refreshedProfileResult.data && typeof refreshedProfileResult.data === "object"
+      ? mapRowToIdentity(refreshedProfileResult.data as Record<string, unknown>)
+      : null;
+
+  if (!profile) {
+    return {
+      success: false,
+      error: "Could not confirm your username right now. Please try again.",
+    };
+  }
+
+  if (!profile.username || validateUsername(profile.username)) {
+    return {
+      success: false,
+      error: "Could not finish setting your username. Please try again.",
+    };
+  }
+
+  return {
+    success: true,
+    profile,
+  };
 }
 
 export async function getProfileIdentity(userId: string): Promise<PublicProfileIdentity | null> {

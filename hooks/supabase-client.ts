@@ -112,16 +112,43 @@ function logAuthError(operation: string, error: unknown): void {
  */
 export async function signUpWithEmail(
   email: string,
-  password: string
+  password: string,
+  username?: string
 ): Promise<AuthResponse> {
   try {
+    const normalizedEmail = email.trim();
+    const redirectUrl = getAuthRedirectUrl("auth/callback");
+    const normalizedUsername = typeof username === "string" ? username.trim().toLowerCase() : "";
+    const metadata = normalizedUsername ? { username: normalizedUsername } : undefined;
+
     const { data, error } = await supabase.auth.signUp({
-      email: email.trim(),
+      email: normalizedEmail,
       password,
       options: {
-        emailRedirectTo: getAuthRedirectUrl("auth/callback"),
+        emailRedirectTo: redirectUrl,
+        data: metadata,
       },
     });
+
+    if (__DEV__) {
+      const errorRecord =
+        error && typeof error === "object"
+          ? (error as { name?: unknown; message?: unknown; status?: unknown; code?: unknown })
+          : null;
+
+      console.log("[RecordQuestSignupResult]", {
+        hasUser: Boolean(data.user),
+        hasSession: Boolean(data.session),
+        identityCount: data.user?.identities?.length ?? null,
+        confirmationLikelyRequired: Boolean(data.user) && !Boolean(data.session),
+        redirectUrl,
+        redirectIsRecordQuestScheme: redirectUrl.startsWith("recordquest://"),
+        errorName: typeof errorRecord?.name === "string" ? errorRecord.name : null,
+        errorMessage: typeof errorRecord?.message === "string" ? errorRecord.message : null,
+        errorStatus: typeof errorRecord?.status === "number" ? errorRecord.status : null,
+        errorCode: typeof errorRecord?.code === "string" ? errorRecord.code : null,
+      });
+    }
 
     if (error) {
       logAuthError("signUp", error);

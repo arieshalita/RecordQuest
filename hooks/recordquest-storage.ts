@@ -31,6 +31,11 @@ export type RecordQuestStateSource = "cloud" | "local";
 
 export type LoadedRecordQuestState = RecordQuestState & {
   source: RecordQuestStateSource;
+  loadError?: string;
+};
+
+export type SaveRecordQuestStateOptions = {
+  expectedUserId?: string | null;
 };
 
 // TODO: Accounts Phase – New UserState type for authenticated user context
@@ -55,6 +60,24 @@ export const WISHLIST_KEY = "recordquest_wishlist";
 export const ACTIVITY_KEY = "recordquest_activity";
 export const STORE_CHECKINS_KEY = "recordquest_store_checkins";
 
+function normalizeUserId(value: string | null | undefined): string | null {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export function getUserScopedStorageKey(baseKey: string, userId: string): string {
+  return `${baseKey}:${userId}`;
+}
+
+function resolveStorageKey(baseKey: string, userId: string | null): string {
+  const normalizedUserId = normalizeUserId(userId);
+  if (!normalizedUserId) {
+    return baseKey;
+  }
+
+  return getUserScopedStorageKey(baseKey, normalizedUserId);
+}
+
 // TODO: Accounts Phase – Add auth token storage key
 // export const AUTH_TOKEN_KEY = "recordquest_auth_token";
 // export const CURRENT_USER_KEY = "recordquest_current_user";
@@ -69,12 +92,17 @@ async function getAuthenticatedUserId(): Promise<string | null> {
   }
 }
 
-async function loadLocalState(initialState: RecordQuestState): Promise<RecordQuestState> {
+async function loadLocalState(initialState: RecordQuestState, userId: string | null): Promise<RecordQuestState> {
+  const recordsKey = resolveStorageKey(RECORDS_KEY, userId);
+  const wishlistKey = resolveStorageKey(WISHLIST_KEY, userId);
+  const activityKey = resolveStorageKey(ACTIVITY_KEY, userId);
+  const storeCheckinsKey = resolveStorageKey(STORE_CHECKINS_KEY, userId);
+
   const [savedRecords, savedWishlist, savedActivity, savedCheckIns] = await Promise.all([
-    AsyncStorage.getItem(RECORDS_KEY),
-    AsyncStorage.getItem(WISHLIST_KEY),
-    AsyncStorage.getItem(ACTIVITY_KEY),
-    AsyncStorage.getItem(STORE_CHECKINS_KEY),
+    AsyncStorage.getItem(recordsKey),
+    AsyncStorage.getItem(wishlistKey),
+    AsyncStorage.getItem(activityKey),
+    AsyncStorage.getItem(storeCheckinsKey),
   ]);
 
   const parsedRecords = savedRecords ? (JSON.parse(savedRecords) as RecordItem[]) : null;
@@ -102,27 +130,33 @@ async function loadLocalState(initialState: RecordQuestState): Promise<RecordQue
   } satisfies RecordQuestState;
 }
 
-async function saveLocalState(state: RecordQuestState): Promise<void> {
+async function saveLocalState(state: RecordQuestState, userId: string | null): Promise<void> {
+  const recordsKey = resolveStorageKey(RECORDS_KEY, userId);
+  const wishlistKey = resolveStorageKey(WISHLIST_KEY, userId);
+  const activityKey = resolveStorageKey(ACTIVITY_KEY, userId);
+  const storeCheckinsKey = resolveStorageKey(STORE_CHECKINS_KEY, userId);
+
   await Promise.all([
-    AsyncStorage.setItem(RECORDS_KEY, JSON.stringify(state.records)),
-    AsyncStorage.setItem(WISHLIST_KEY, JSON.stringify(state.wishlist)),
-    AsyncStorage.setItem(ACTIVITY_KEY, JSON.stringify(state.activity)),
-    AsyncStorage.setItem(STORE_CHECKINS_KEY, JSON.stringify(state.storeCheckIns)),
+    AsyncStorage.setItem(recordsKey, JSON.stringify(state.records)),
+    AsyncStorage.setItem(wishlistKey, JSON.stringify(state.wishlist)),
+    AsyncStorage.setItem(activityKey, JSON.stringify(state.activity)),
+    AsyncStorage.setItem(storeCheckinsKey, JSON.stringify(state.storeCheckIns)),
   ]);
 }
 
 export async function loadRecordQuestState(initialState: RecordQuestState): Promise<LoadedRecordQuestState> {
-  try {
-    const userId = await getAuthenticatedUserId();
+  const supabaseModeEnabled = isSupabaseDataModeEnabled();
+  const userId = await getAuthenticatedUserId();
 
-    function sanitizeRecordItems(items: RecordItem[]): RecordItem[] {
-      return items.map((item) => ({
-        ...item,
-        cover: normalizeAlbumArtUrlOrNull(item.cover) ?? "",
-      }));
-    }
+  function sanitizeRecordItems(items: RecordItem[]): RecordItem[] {
+    return items.map((item) => ({
+      ...item,
+      cover: normalizeAlbumArtUrlOrNull(item.cover) ?? "",
+    }));
+  }
 
-    if (isSupabaseDataModeEnabled() && userId) {
+  if (supabaseModeEnabled && userId) {
+    try {
       const [records, wishlist, activity, storeCheckIns] = await Promise.all([
         loadRecords(userId),
         loadWishlist(userId),
@@ -146,29 +180,52 @@ export async function loadRecordQuestState(initialState: RecordQuestState): Prom
         storeCheckIns,
         source: "cloud",
       } satisfies LoadedRecordQuestState;
+    } catch (error) {
+      console.warn("[RecordQuest][storage] cloud load failed for authenticated user:", error);
+      return {
+        records: [],
+        wishlist: [],
+        activity: [],
+        storeCheckIns: {},
+        source: "cloud",
+        loadError: "We couldn't load your cloud collection right now. Please try again.",
+      } satisfies LoadedRecordQuestState;
     }
+  }
 
-    if (isSupabaseDataModeEnabled() && !userId) {
-      console.warn("[RecordQuest][storage] Supabase mode active but no authenticated user found; using AsyncStorage fallback");
-    }
+  if (supabaseModeEnabled && !userId) {
+    console.warn("[RecordQuest][storage] Supabase mode active but no authenticated user found; using AsyncStorage fallback");
+  }
 
-    const localState = await loadLocalState(initialState);
+  try {
+    const localState = await loadLocalState(initialState, normalizeUserId(userId));
     return {
       ...localState,
       source: "local",
     } satisfies LoadedRecordQuestState;
   } catch (error) {
     console.warn("Error loading saved data:", error);
-    const localState = await loadLocalState(initialState);
     return {
-      ...localState,
+      ...initialState,
       source: "local",
+      loadError: "We couldn't load local data right now. Please try again.",
     } satisfies LoadedRecordQuestState;
   }
 }
 
-export async function saveRecordQuestState(state: RecordQuestState) {
+export async function saveRecordQuestState(state: RecordQuestState, options?: SaveRecordQuestStateOptions) {
   try {
+    const expectedUserId = normalizeUserId(options?.expectedUserId ?? null);
+    const authenticatedUserId = normalizeUserId(await getAuthenticatedUserId());
+
+    if (expectedUserId && authenticatedUserId !== expectedUserId) {
+      console.warn("[RecordQuest][storage] skipping stale save because authenticated user changed", {
+        expectedUserId,
+        authenticatedUserId,
+      });
+      return;
+    }
+
     const sanitizedState: RecordQuestState = {
       ...state,
       records: state.records.map((item) => ({
@@ -181,23 +238,22 @@ export async function saveRecordQuestState(state: RecordQuestState) {
       })),
     };
 
-    await saveLocalState(sanitizedState);
+    await saveLocalState(sanitizedState, authenticatedUserId);
 
     if (!isSupabaseDataModeEnabled()) {
       return;
     }
 
-    const userId = await getAuthenticatedUserId();
-    if (!userId) {
+    if (!authenticatedUserId) {
       console.warn("[RecordQuest][storage] skipping Supabase save because no authenticated user id is available");
       return;
     }
 
     await Promise.all([
-      saveRecords(userId, sanitizedState.records),
-      saveWishlist(userId, sanitizedState.wishlist),
-      saveActivity(userId, sanitizedState.activity),
-      saveStoreCheckins(userId, sanitizedState.storeCheckIns),
+      saveRecords(authenticatedUserId, sanitizedState.records),
+      saveWishlist(authenticatedUserId, sanitizedState.wishlist),
+      saveActivity(authenticatedUserId, sanitizedState.activity),
+      saveStoreCheckins(authenticatedUserId, sanitizedState.storeCheckIns),
     ]);
   } catch (error) {
     console.warn("Error saving data:", error);
