@@ -126,6 +126,7 @@ function RootNavigator() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="auth/callback" />
+      <Stack.Screen name="auth/reset-password" />
 
       <Stack.Protected guard={!!user && profileSetupStatus === "ready"}>
         <Stack.Screen name="(tabs)" />

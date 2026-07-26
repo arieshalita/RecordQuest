@@ -4,12 +4,13 @@ import { router, useLocalSearchParams } from "expo-router";
 import * as Linking from "expo-linking";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { supabase } from "../../hooks/supabase-client";
+import { detectCallbackAuthMethod, mapRecoveryCallbackError } from "../../utils/auth-recovery";
 
 type CallbackState = {
   status: "loading" | "success" | "error";
   title: string;
   message: string;
-  nextHref: "/(auth)/sign-in" | "/(tabs)";
+  nextHref: "/(auth)/sign-in" | "/(tabs)" | "/auth/reset-password";
 };
 
 const OTP_TYPES: EmailOtpType[] = ["signup", "invite", "recovery", "email", "email_change"];
@@ -61,10 +62,15 @@ function mapType(rawType: string | null): EmailOtpType | null {
 }
 
 function buildCallbackKey(url: string, queryParams: URLSearchParams, hashParams: URLSearchParams): string {
+  const code = queryParams.get("code") ?? "";
   const tokenHash = queryParams.get("token_hash") ?? hashParams.get("token_hash") ?? "";
   const accessToken = hashParams.get("access_token") ?? queryParams.get("access_token") ?? "";
   const refreshToken = hashParams.get("refresh_token") ?? queryParams.get("refresh_token") ?? "";
   const type = queryParams.get("type") ?? hashParams.get("type") ?? "";
+
+  if (code) {
+    return `code:${type}:${code.length}`;
+  }
 
   if (tokenHash) {
     return `token_hash:${type}:${tokenHash}`;
@@ -79,6 +85,7 @@ function buildCallbackKey(url: string, queryParams: URLSearchParams, hashParams:
 
 function hasAuthPayload(queryParams: URLSearchParams, hashParams: URLSearchParams): boolean {
   return Boolean(
+    queryParams.get("code") ||
     queryParams.get("token_hash") ||
       hashParams.get("token_hash") ||
       hashParams.get("access_token") ||
@@ -134,7 +141,7 @@ export default function AuthCallbackScreen() {
     hasStartedRef.current = true;
     let isMounted = true;
 
-    function replaceAway(nextHref: "/(auth)/sign-in" | "/(tabs)", reason: string) {
+    function replaceAway(nextHref: "/(auth)/sign-in" | "/(tabs)" | "/auth/reset-password", reason: string) {
       logCallback("route replaced", { nextHref, reason });
       router.replace(nextHref);
     }
@@ -172,9 +179,17 @@ export default function AuthCallbackScreen() {
         const accessToken = hashParams.get("access_token") ?? queryParams.get("access_token");
         const refreshToken = hashParams.get("refresh_token") ?? queryParams.get("refresh_token");
         const tokenHash = queryParams.get("token_hash") ?? hashParams.get("token_hash");
+        const code = queryParams.get("code");
         const rawType = queryParams.get("type") ?? hashParams.get("type");
         const authType = mapType(rawType);
         const queryError = queryParams.get("error_description") ?? queryParams.get("error");
+        const callbackAuthMethod = detectCallbackAuthMethod({
+          code,
+          accessToken,
+          refreshToken,
+          tokenHash,
+          authType: rawType,
+        });
 
         if (!hasAuthPayload(queryParams, hashParams)) {
           consumedCallbackKeys.add(callbackKey);
@@ -195,7 +210,10 @@ export default function AuthCallbackScreen() {
           setState({
             status: "error",
             title: "Verification Failed",
-            message: mapCallbackErrorMessage(queryError),
+            message:
+              authType === "recovery"
+                ? mapRecoveryCallbackError(queryError)
+                : mapCallbackErrorMessage(queryError),
             nextHref: "/(auth)/sign-in",
           });
           return;
@@ -203,7 +221,25 @@ export default function AuthCallbackScreen() {
 
         await supabase.auth.signOut({ scope: "local" });
 
-        if (accessToken && refreshToken) {
+        if (callbackAuthMethod === "exchangeCode" && code) {
+          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+
+          if (exchangeError) {
+            consumedCallbackKeys.add(callbackKey);
+
+            if (!isMounted) return;
+            setState({
+              status: "error",
+              title: "Verification Failed",
+              message:
+                authType === "recovery"
+                  ? mapRecoveryCallbackError(exchangeError.message)
+                  : mapCallbackErrorMessage(exchangeError.message),
+              nextHref: "/(auth)/sign-in",
+            });
+            return;
+          }
+        } else if (callbackAuthMethod === "setSession" && accessToken && refreshToken) {
           const { error: setSessionError } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
@@ -216,12 +252,15 @@ export default function AuthCallbackScreen() {
             setState({
               status: "error",
               title: "Verification Failed",
-              message: mapCallbackErrorMessage(setSessionError.message),
+              message:
+                authType === "recovery"
+                  ? mapRecoveryCallbackError(setSessionError.message)
+                  : mapCallbackErrorMessage(setSessionError.message),
               nextHref: "/(auth)/sign-in",
             });
             return;
           }
-        } else if (tokenHash && authType) {
+        } else if (callbackAuthMethod === "verifyOtp" && tokenHash && authType) {
           const { error: verifyError } = await supabase.auth.verifyOtp({
             token_hash: tokenHash,
             type: authType,
@@ -234,7 +273,10 @@ export default function AuthCallbackScreen() {
             setState({
               status: "error",
               title: "Verification Failed",
-              message: mapCallbackErrorMessage(verifyError.message),
+              message:
+                authType === "recovery"
+                  ? mapRecoveryCallbackError(verifyError.message)
+                  : mapCallbackErrorMessage(verifyError.message),
               nextHref: "/(auth)/sign-in",
             });
             return;
@@ -259,10 +301,16 @@ export default function AuthCallbackScreen() {
         consumedCallbackKeys.add(callbackKey);
 
         const wasRecoveryFlow = authType === "recovery" || rawType?.toLowerCase() === "recovery";
-        const nextHref = session?.user && !wasRecoveryFlow ? "/(tabs)" : "/(auth)/sign-in";
+        const nextHref = wasRecoveryFlow
+          ? session?.user
+            ? "/auth/reset-password"
+            : "/(auth)/sign-in"
+          : session?.user
+            ? "/(tabs)"
+            : "/(auth)/sign-in";
         const successTitle = wasRecoveryFlow ? "Link Verified" : "Email Verified";
         const successMessage = wasRecoveryFlow
-          ? "Your password reset link is verified. Continue to sign in."
+          ? "Your password reset link is verified. Set your new password to continue."
           : "Your email is verified. You can continue now.";
 
         if (!isMounted) return;

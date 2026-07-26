@@ -33,7 +33,7 @@ import {
   type User,
 } from "@supabase/supabase-js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as Linking from "expo-linking";
+import { buildAuthRedirectUrl } from "../utils/auth-redirect-url";
 
 // Read environment variables with Expo public prefix
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -83,7 +83,7 @@ type DeleteAccountFunctionResponse = {
 };
 
 export function getAuthRedirectUrl(path = "auth/callback"): string {
-  return Linking.createURL(path, { scheme: "recordquest" });
+  return buildAuthRedirectUrl(path, "recordquest");
 }
 
 function logAuthError(operation: string, error: unknown): void {
