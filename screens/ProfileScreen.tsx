@@ -10,6 +10,7 @@ import { AchievementBadgeCard } from "../components/AchievementBadgeCard";
 import { useAuth } from "../providers/AuthProvider";
 import type { RecordItem, AchievementCategory, CollectionAnalytics } from "../hooks/types";
 import { calculateCollectionAnalytics } from "../utils/analytics";
+import { buildAchievementPreviewBadges, sortAchievementBadges } from "../utils/achievement-display";
 import {
   followUser,
   getFollowerCount,
@@ -140,7 +141,7 @@ function CollectionAnalyticsDashboard({ analytics }: { analytics: CollectionAnal
     { value: analytics.totalRecords, label: "Total records", icon: "📚" },
     { value: analytics.totalArtists, label: "Unique artists", icon: "🎤" },
     { value: analytics.totalGenres, label: "Unique genres", icon: "🎵" },
-    { value: analytics.collectorProfileLabel, label: "Collector profile", icon: "🧭" },
+    { value: analytics.wishlistCount, label: "Wishlist items", icon: "✨" },
     { value: analytics.ratedRecordsCount > 0 ? analytics.averageRating : "-", label: `Average rating (${analytics.ratedRecordsCount} rated)`, icon: "⭐" },
     { value: analytics.recordsAddedThisYear, label: "Added this year", icon: "📅" },
     { value: analytics.recordsAddedThisMonth, label: "Added this month", icon: "🗓️" },
@@ -320,6 +321,7 @@ export function ProfileScreen({
   const [selectedFeatureTile, setSelectedFeatureTile] = useState<FeatureTile | null>(null);
   const [showInsights, setShowInsights] = useState(false);
   const [profileIdentityUserId, setProfileIdentityUserId] = useState<string | null>(null);
+  const [isAchievementsModalOpen, setIsAchievementsModalOpen] = useState(false);
   const [isDeleteAccountModalOpen, setIsDeleteAccountModalOpen] = useState(false);
   const [isDeleteAccountLoading, setIsDeleteAccountLoading] = useState(false);
   const [deleteAccountConfirmationText, setDeleteAccountConfirmationText] = useState("");
@@ -340,6 +342,14 @@ export function ProfileScreen({
     setDeleteAccountSuccess(null);
     setIsDeleteAccountLoading(false);
     setIsDeleteAccountModalOpen(true);
+  }, []);
+
+  const openAchievementsModal = useCallback(() => {
+    setIsAchievementsModalOpen(true);
+  }, []);
+
+  const closeAchievementsModal = useCallback(() => {
+    setIsAchievementsModalOpen(false);
   }, []);
 
   const closeDeleteAccountModal = useCallback(() => {
@@ -423,6 +433,9 @@ export function ProfileScreen({
     () => achievementCategories.flatMap((category) => category.badges),
     [achievementCategories]
   );
+  const sortedAchievements = useMemo(() => sortAchievementBadges(allBadges), [allBadges]);
+  const earnedAchievements = useMemo(() => sortedAchievements.filter((badge) => badge.unlocked), [sortedAchievements]);
+  const achievementPreviewBadges = useMemo(() => buildAchievementPreviewBadges(allBadges), [allBadges]);
   const categoryProgressMap = useMemo(() => {
     const map = new Map<string, { unlocked: number; total: number }>();
 
@@ -436,6 +449,14 @@ export function ProfileScreen({
   }, [achievementCategories]);
   const resolvedProfileName = profileDisplayNameState || (isOwnProfile ? ownProfileFallbackName : profileDisplayName ?? "Collector");
   const isCurrentProfileIdentity = profileIdentityUserId === targetUserId;
+
+  const achievementSummaryText = useMemo(() => {
+    if (earnedAchievements.length === 0) {
+      return "Start building your collection to unlock achievements.";
+    }
+
+    return `${earnedAchievements.length} of ${allBadges.length} earned`;
+  }, [allBadges.length, earnedAchievements.length]);
 
   const profileInitial = useMemo(() => {
     const source = resolvedProfileName || profileUsername || "R";
@@ -945,19 +966,45 @@ export function ProfileScreen({
             />
           </View>
 
-          <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Achievements</Text>
-            <Text style={styles.sectionLinkText}>{allBadges.length} total</Text>
+          <View style={styles.achievementSummaryCard}>
+            <View style={styles.achievementSummaryHeader}>
+              <View>
+                <Text style={styles.sectionTitle}>Achievements</Text>
+                <Text style={styles.achievementSummarySubtext}>{achievementSummaryText}</Text>
+              </View>
+              <Pressable onPress={openAchievementsModal} hitSlop={8} style={styles.achievementViewAllButton}>
+                <Text style={styles.achievementViewAllText}>View all</Text>
+              </Pressable>
+            </View>
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              directionalLockEnabled
+              showsHorizontalScrollIndicator={false}
+              style={styles.achievementPreviewScrollView}
+              onLayout={(event) => {
+                if (__DEV__) {
+                  console.log("[RecordQuest][achievement-preview] viewport", event.nativeEvent.layout.width, "items", achievementPreviewBadges.length);
+                }
+              }}
+              onContentSizeChange={(contentWidth) => {
+                if (__DEV__) {
+                  console.log("[RecordQuest][achievement-preview] content", contentWidth, "items", achievementPreviewBadges.length);
+                }
+              }}
+              contentContainerStyle={styles.achievementPreviewRow}
+            >
+              {achievementPreviewBadges.map((badge) => (
+                <View key={badge.id} style={styles.achievementPreviewPill}>
+                  <Text style={styles.achievementPreviewEmoji}>{badge.emoji}</Text>
+                  <Text style={styles.achievementPreviewLabel} numberOfLines={1}>
+                    {badge.label}
+                  </Text>
+                  <Text style={styles.achievementPreviewStatus}>{badge.unlocked ? "Earned" : "Locked"}</Text>
+                </View>
+              ))}
+            </ScrollView>
           </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.achievementGrid}
-          >
-            {allBadges.map((badge) => (
-              <AchievementBadgeCard key={badge.id} badge={badge} />
-            ))}
-          </ScrollView>
 
           <Text style={styles.sectionTitle}>Recent Activity</Text>
           {activity.length === 0 ? (
@@ -1143,6 +1190,45 @@ export function ProfileScreen({
         </>
       )}
     </ScrollView>
+    <Modal
+      transparent
+      visible={isAchievementsModalOpen}
+      animationType="fade"
+      presentationStyle="overFullScreen"
+      onRequestClose={closeAchievementsModal}
+    >
+      <View style={styles.achievementModalRoot}>
+        <Pressable style={styles.achievementModalBackdrop} onPress={closeAchievementsModal} />
+
+        <View style={styles.achievementModalContentShell} pointerEvents="box-none">
+          <View style={styles.achievementModalCard}>
+            <View style={styles.achievementModalHeader}>
+              <View>
+                <Text style={styles.achievementModalTitle}>All Achievements</Text>
+                <Text style={styles.achievementModalSubtext}>
+                  {earnedAchievements.length} of {allBadges.length} earned
+                </Text>
+              </View>
+              <Pressable style={styles.achievementModalCloseButton} onPress={closeAchievementsModal}>
+                <Text style={styles.achievementModalCloseButtonText}>Close</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView
+              style={styles.achievementModalScrollView}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+              contentContainerStyle={styles.achievementModalScrollContent}
+            >
+              {sortedAchievements.map((badge) => (
+                <AchievementBadgeCard key={badge.id} badge={badge} variant="fullWidth" />
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </View>
+    </Modal>
     <Modal
       transparent
       visible={isDeleteAccountModalOpen}
@@ -1812,6 +1898,133 @@ const styles = StyleSheet.create({
     color: "#A7A1BD",
     fontSize: 12,
     marginTop: 2,
+  },
+  achievementSummaryCard: {
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.22)",
+    backgroundColor: "rgba(18, 16, 34, 0.92)",
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 10,
+    alignSelf: "stretch",
+  },
+  achievementSummaryHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  achievementViewAllButton: {
+    paddingTop: 2,
+  },
+  achievementSummarySubtext: {
+    color: "#CFC7E6",
+    fontSize: 12,
+    marginTop: 4,
+  },
+  achievementViewAllText: {
+    color: "#C4BEE0",
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  achievementPreviewRow: {
+    paddingTop: 14,
+    paddingBottom: 2,
+    paddingRight: 24,
+  },
+  achievementPreviewScrollView: {
+    width: "100%",
+    alignSelf: "stretch",
+    marginTop: 14,
+  },
+  achievementPreviewPill: {
+    width: 128,
+    flexShrink: 0,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.10)",
+    backgroundColor: "rgba(15, 17, 24, 0.82)",
+    padding: 10,
+  },
+  achievementPreviewEmoji: {
+    fontSize: 20,
+    marginBottom: 8,
+  },
+  achievementPreviewLabel: {
+    color: "#FFF4D6",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  achievementPreviewStatus: {
+    color: "#C4BEE0",
+    fontSize: 10,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  achievementModalRoot: {
+    flex: 1,
+  },
+  achievementModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(3, 2, 8, 0.74)",
+  },
+  achievementModalContentShell: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 24,
+    paddingBottom: 28,
+    justifyContent: "flex-end",
+  },
+  achievementModalCard: {
+    flex: 1,
+    width: "100%",
+    maxHeight: "100%",
+    alignSelf: "stretch",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.28)",
+    backgroundColor: "rgba(11, 11, 17, 0.98)",
+    padding: 16,
+  },
+  achievementModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 14,
+    alignItems: "flex-start",
+  },
+  achievementModalTitle: {
+    color: "#FFF4D6",
+    fontSize: 20,
+    fontWeight: "800",
+  },
+  achievementModalSubtext: {
+    color: "#CFC7E6",
+    fontSize: 12,
+    marginTop: 4,
+  },
+  achievementModalCloseButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.12)",
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+  },
+  achievementModalCloseButtonText: {
+    color: "#F8EED4",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  achievementModalScrollContent: {
+    width: "100%",
+    gap: 10,
+    paddingBottom: 28,
+  },
+  achievementModalScrollView: {
+    flex: 1,
+    width: "100%",
   },
   accountActionSection: {
     marginTop: 36,

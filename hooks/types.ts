@@ -103,5 +103,4 @@ export type CollectionAnalytics = {
   wishlistCount: number;
   wishlistCompletionPercent: number;
   mostRecentAlbum: RecordItem | null;
-  collectorProfileLabel: "Starter" | "Crate Digger" | "Collector" | "Archivist" | "Vinyl Vault";
 };

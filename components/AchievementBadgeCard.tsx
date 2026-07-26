@@ -14,9 +14,10 @@ export type AchievementBadge = {
 
 interface AchievementBadgeCardProps {
   badge: AchievementBadge;
+  variant?: "compact" | "fullWidth";
 }
 
-export function AchievementBadgeCard({ badge }: AchievementBadgeCardProps) {
+export function AchievementBadgeCard({ badge, variant = "compact" }: AchievementBadgeCardProps) {
   function formatEarnedDate(value?: string | null): string | null {
     if (!value) {
       return null;
@@ -39,7 +40,13 @@ export function AchievementBadgeCard({ badge }: AchievementBadgeCardProps) {
   const earnedDateLabel = badge.unlocked ? formatEarnedDate(badge.earned_at) : null;
 
   return (
-    <View style={[styles.badgeCard, badge.unlocked ? styles.badgeCardUnlocked : styles.badgeCardLocked]}>
+    <View
+      style={[
+        styles.badgeCard,
+        variant === "fullWidth" ? styles.badgeCardFullWidth : styles.badgeCardCompact,
+        badge.unlocked ? styles.badgeCardUnlocked : styles.badgeCardLocked,
+      ]}
+    >
       <Text style={[styles.badgeEmoji, badge.unlocked ? styles.badgeEmojiUnlocked : styles.badgeEmojiLocked]}>
         {badge.emoji}
       </Text>
@@ -82,6 +89,14 @@ const styles = StyleSheet.create({
     minHeight: 142,
     borderWidth: 1,
     marginBottom: 2,
+  },
+  badgeCardCompact: {},
+  badgeCardFullWidth: {
+    width: "100%",
+    minHeight: 0,
+    alignItems: "flex-start",
+    paddingVertical: 14,
+    paddingHorizontal: 14,
   },
   badgeCardUnlocked: {
     borderColor: "rgba(248, 238, 220, 0.16)",

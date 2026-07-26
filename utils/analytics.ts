@@ -53,14 +53,6 @@ function roundToOne(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-function getCollectorProfileLabel(totalRecords: number): CollectionAnalytics["collectorProfileLabel"] {
-  if (totalRecords >= 200) return "Vinyl Vault";
-  if (totalRecords >= 100) return "Archivist";
-  if (totalRecords >= 40) return "Collector";
-  if (totalRecords >= 10) return "Crate Digger";
-  return "Starter";
-}
-
 function getMonthKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
@@ -488,6 +480,5 @@ export function calculateCollectionAnalytics(
     wishlistCount: wishlist.length,
     wishlistCompletionPercent,
     mostRecentAlbum,
-    collectorProfileLabel: getCollectorProfileLabel(totalRecords),
   };
 }
