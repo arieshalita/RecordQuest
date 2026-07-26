@@ -5,6 +5,10 @@ import * as Linking from "expo-linking";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { supabase } from "../../hooks/supabase-client";
 import { detectCallbackAuthMethod, mapRecoveryCallbackError } from "../../utils/auth-recovery";
+import {
+  parseAuthCallbackUrl,
+  resolveCallbackNavigationTarget,
+} from "../../utils/auth-callback-url";
 
 type CallbackState = {
   status: "loading" | "success" | "error";
@@ -152,10 +156,42 @@ export default function AuthCallbackScreen() {
       try {
         const initialUrl = liveUrl ?? (await getInitialUrlOnce()) ?? "";
 
-        const parsed = initialUrl ? new URL(initialUrl) : null;
-        const queryParams = parsed ? parseParams(parsed.search) : fallbackQuery;
-        const hashParams = parsed ? parseParams(parsed.hash) : new URLSearchParams();
+        const fallbackQueryString = fallbackQuery.toString();
+        const callbackInputUrl = initialUrl || `/auth/callback${fallbackQueryString ? `?${fallbackQueryString}` : ""}`;
+        const parsedCallback = parseAuthCallbackUrl(callbackInputUrl);
+        const queryParams = new URLSearchParams(fallbackQueryString);
+        const hashParams = new URLSearchParams();
+
+        if (initialUrl) {
+          try {
+            const parsed = new URL(initialUrl);
+            const initialQueryParams = parseParams(parsed.search);
+            const initialHashParams = parseParams(parsed.hash);
+
+            for (const [key, value] of initialQueryParams.entries()) {
+              queryParams.set(key, value);
+            }
+
+            for (const [key, value] of initialHashParams.entries()) {
+              hashParams.set(key, value);
+              if (!queryParams.has(key)) {
+                queryParams.set(key, value);
+              }
+            }
+          } catch {
+            // URL parsing can fail on malformed links; parsedCallback still covers path/query/hash text safely.
+          }
+        }
+
         const callbackKey = buildCallbackKey(initialUrl || "no-url", queryParams, hashParams);
+
+        logCallback("callback URL diagnostics", {
+          appStartState: liveUrl ? "already-running" : "cold-start",
+          incomingScheme: initialUrl.includes("://") ? initialUrl.split("://")[0] : null,
+          normalizedPathname: parsedCallback.normalizedPathname,
+          queryParamNames: parsedCallback.queryParamNames,
+          fragmentParamNames: parsedCallback.fragmentParamNames,
+        });
 
         logCallback("URL processed", {
           hasUrl: Boolean(initialUrl),
@@ -176,8 +212,8 @@ export default function AuthCallbackScreen() {
           return;
         }
 
-        const accessToken = hashParams.get("access_token") ?? queryParams.get("access_token");
-        const refreshToken = hashParams.get("refresh_token") ?? queryParams.get("refresh_token");
+        const accessToken = queryParams.get("access_token") ?? hashParams.get("access_token");
+        const refreshToken = queryParams.get("refresh_token") ?? hashParams.get("refresh_token");
         const tokenHash = queryParams.get("token_hash") ?? hashParams.get("token_hash");
         const code = queryParams.get("code");
         const rawType = queryParams.get("type") ?? hashParams.get("type");
@@ -189,6 +225,11 @@ export default function AuthCallbackScreen() {
           refreshToken,
           tokenHash,
           authType: rawType,
+        });
+
+        logCallback("recovery flow detected", {
+          authType: rawType ?? null,
+          callbackAuthMethod,
         });
 
         if (!hasAuthPayload(queryParams, hashParams)) {
@@ -227,6 +268,12 @@ export default function AuthCallbackScreen() {
           if (exchangeError) {
             consumedCallbackKeys.add(callbackKey);
 
+            logCallback("session establishment failed", {
+              callbackAuthMethod,
+              authType: rawType ?? null,
+              reason: "exchangeCodeForSession",
+            });
+
             if (!isMounted) return;
             setState({
               status: "error",
@@ -239,6 +286,11 @@ export default function AuthCallbackScreen() {
             });
             return;
           }
+
+          logCallback("session establishment succeeded", {
+            callbackAuthMethod,
+            authType: rawType ?? null,
+          });
         } else if (callbackAuthMethod === "setSession" && accessToken && refreshToken) {
           const { error: setSessionError } = await supabase.auth.setSession({
             access_token: accessToken,
@@ -247,6 +299,12 @@ export default function AuthCallbackScreen() {
 
           if (setSessionError) {
             consumedCallbackKeys.add(callbackKey);
+
+            logCallback("session establishment failed", {
+              callbackAuthMethod,
+              authType: rawType ?? null,
+              reason: "setSession",
+            });
 
             if (!isMounted) return;
             setState({
@@ -260,6 +318,11 @@ export default function AuthCallbackScreen() {
             });
             return;
           }
+
+          logCallback("session establishment succeeded", {
+            callbackAuthMethod,
+            authType: rawType ?? null,
+          });
         } else if (callbackAuthMethod === "verifyOtp" && tokenHash && authType) {
           const { error: verifyError } = await supabase.auth.verifyOtp({
             token_hash: tokenHash,
@@ -268,6 +331,12 @@ export default function AuthCallbackScreen() {
 
           if (verifyError) {
             consumedCallbackKeys.add(callbackKey);
+
+            logCallback("session establishment failed", {
+              callbackAuthMethod,
+              authType: rawType ?? null,
+              reason: "verifyOtp",
+            });
 
             if (!isMounted) return;
             setState({
@@ -281,6 +350,11 @@ export default function AuthCallbackScreen() {
             });
             return;
           }
+
+          logCallback("session establishment succeeded", {
+            callbackAuthMethod,
+            authType: rawType ?? null,
+          });
         } else {
           consumedCallbackKeys.add(callbackKey);
 
@@ -301,17 +375,21 @@ export default function AuthCallbackScreen() {
         consumedCallbackKeys.add(callbackKey);
 
         const wasRecoveryFlow = authType === "recovery" || rawType?.toLowerCase() === "recovery";
-        const nextHref = wasRecoveryFlow
-          ? session?.user
-            ? "/auth/reset-password"
-            : "/(auth)/sign-in"
-          : session?.user
-            ? "/(tabs)"
-            : "/(auth)/sign-in";
+        const nextHref = resolveCallbackNavigationTarget({
+          isRecoveryFlow: wasRecoveryFlow,
+          hasSessionUser: Boolean(session?.user),
+        });
         const successTitle = wasRecoveryFlow ? "Link Verified" : "Email Verified";
         const successMessage = wasRecoveryFlow
           ? "Your password reset link is verified. Set your new password to continue."
           : "Your email is verified. You can continue now.";
+
+        logCallback("callback navigation target computed", {
+          callbackAuthMethod,
+          authType: rawType ?? null,
+          nextHref,
+          hasSessionUser: Boolean(session?.user),
+        });
 
         if (!isMounted) return;
         setState({

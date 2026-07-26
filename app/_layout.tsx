@@ -5,6 +5,7 @@ import * as Notifications from "expo-notifications";
 import { AuthProvider, useAuth } from "../providers/AuthProvider";
 import { registerForPushNotificationsAsync } from "../hooks/push-notifications";
 import { upsertUserPushToken } from "../hooks/recordquest-supabase-service";
+import { getProfileRedirectTarget, isRecoveryAuthRoute } from "../utils/auth-route-guard";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -34,14 +35,29 @@ function RootNavigator() {
       return;
     }
 
-    if (profileSetupStatus === "username-required" && pathname !== "/choose-username") {
-      router.replace("/choose-username");
+    const redirectTarget = getProfileRedirectTarget({
+      pathname,
+      profileSetupStatus,
+      hasUserId: Boolean(user?.id),
+    });
+
+    if (!redirectTarget) {
       return;
     }
 
-    if (profileSetupStatus === "ready" && pathname === "/choose-username") {
-      router.replace("/(tabs)");
+    if (isRecoveryAuthRoute(pathname)) {
+      if (__DEV__) {
+        console.log("[RecordQuest][root-layout] profile redirect suppressed for recovery route", {
+          pathname,
+          attemptedTarget: redirectTarget,
+          profileSetupStatus,
+          didAttemptOverrideCallback: pathname === "/auth/callback",
+        });
+      }
+      return;
     }
+
+    router.replace(redirectTarget);
   }, [pathname, profileSetupStatus, user?.id]);
 
   useEffect(() => {

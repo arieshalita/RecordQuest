@@ -13,7 +13,20 @@ function testCallbackQueryPreserved(): void {
 
 function testCallbackFragmentPreserved(): void {
   const actual = normalizeNativeIntentPath("recordquest://auth/callback#access_token=test");
-  assert(actual === "/auth/callback#access_token=test", `Expected normalized callback fragment path, got: ${actual}`);
+  assert(
+    actual === "/auth/callback?access_token=test#access_token=test",
+    `Expected normalized callback fragment path, got: ${actual}`
+  );
+}
+
+function testHostStrippedCallbackPath(): void {
+  const actual = normalizeNativeIntentPath("/callback?code=test");
+  assert(actual === "/auth/callback?code=test", `Expected host-stripped callback path normalization, got: ${actual}`);
+}
+
+function testAuthPathWithoutLeadingSlash(): void {
+  const actual = normalizeNativeIntentPath("auth/callback?code=test");
+  assert(actual === "/auth/callback?code=test", `Expected auth callback normalization without leading slash, got: ${actual}`);
 }
 
 function testMalformedUrlPassThrough(): void {
@@ -34,6 +47,8 @@ function testAlreadyNormalizedPathPassThrough(): void {
 function run(): void {
   testCallbackQueryPreserved();
   testCallbackFragmentPreserved();
+  testHostStrippedCallbackPath();
+  testAuthPathWithoutLeadingSlash();
   testMalformedUrlPassThrough();
   testNonAuthLinkPassThrough();
   testAlreadyNormalizedPathPassThrough();
