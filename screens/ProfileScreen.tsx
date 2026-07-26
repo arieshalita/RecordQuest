@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ScrollView, Text, View, StyleSheet, Pressable, TextInput, Modal } from "react-native";
+import { ScrollView, Text, View, StyleSheet, Pressable, TextInput, Modal, ActivityIndicator } from "react-native";
+import { router } from "expo-router";
 import { AlbumArt } from "../components/AlbumArt";
 import { TopBar } from "../components/TopBar";
 import { StatCard } from "../components/StatCard";
@@ -286,7 +287,7 @@ export function ProfileScreen({
   onOpenSocialConnections,
   onOpenProfileRecords,
 }: ProfileScreenProps) {
-  const { signOut, user, isLoading: isAuthLoading } = useAuth();
+  const { signOut, deleteAccount, user, isLoading: isAuthLoading } = useAuth();
   const currentUserId = user?.id ?? null;
   const targetUserId = profileUserId ?? currentUserId;
   const isOwnProfile = useMemo(
@@ -319,6 +320,11 @@ export function ProfileScreen({
   const [selectedFeatureTile, setSelectedFeatureTile] = useState<FeatureTile | null>(null);
   const [showInsights, setShowInsights] = useState(false);
   const [profileIdentityUserId, setProfileIdentityUserId] = useState<string | null>(null);
+  const [isDeleteAccountModalOpen, setIsDeleteAccountModalOpen] = useState(false);
+  const [isDeleteAccountLoading, setIsDeleteAccountLoading] = useState(false);
+  const [deleteAccountConfirmationText, setDeleteAccountConfirmationText] = useState("");
+  const [deleteAccountError, setDeleteAccountError] = useState<string | null>(null);
+  const [deleteAccountSuccess, setDeleteAccountSuccess] = useState<string | null>(null);
   const saveIdentityInFlightRef = useRef(false);
   const activeTargetUserIdRef = useRef<string | null>(targetUserId ?? null);
   const followMetaRequestIdRef = useRef(0);
@@ -327,6 +333,63 @@ export function ProfileScreen({
   useEffect(() => {
     activeTargetUserIdRef.current = targetUserId ?? null;
   }, [targetUserId]);
+
+  const openDeleteAccountModal = useCallback(() => {
+    setDeleteAccountConfirmationText("");
+    setDeleteAccountError(null);
+    setDeleteAccountSuccess(null);
+    setIsDeleteAccountLoading(false);
+    setIsDeleteAccountModalOpen(true);
+  }, []);
+
+  const closeDeleteAccountModal = useCallback(() => {
+    if (isDeleteAccountLoading) {
+      return;
+    }
+
+    setIsDeleteAccountModalOpen(false);
+    setDeleteAccountConfirmationText("");
+    setDeleteAccountError(null);
+    setDeleteAccountSuccess(null);
+  }, [isDeleteAccountLoading]);
+
+  const confirmDeleteAccount = useCallback(async () => {
+    if (isDeleteAccountLoading) {
+      return;
+    }
+
+    if (deleteAccountConfirmationText.trim() !== "DELETE") {
+      setDeleteAccountError("Type DELETE to confirm account deletion.");
+      return;
+    }
+
+    setDeleteAccountError(null);
+    setDeleteAccountSuccess(null);
+    setIsDeleteAccountLoading(true);
+
+    const result = await deleteAccount();
+
+    if (!result.success) {
+      setIsDeleteAccountLoading(false);
+      setDeleteAccountError(
+        result.error ??
+          "RecordQuest couldn't delete your account. Your account has not been fully removed. Please try again."
+      );
+      return;
+    }
+
+    setDeleteAccountSuccess("Your RecordQuest account was deleted.");
+
+    await new Promise((resolve) => setTimeout(resolve, 700));
+
+    const signOutResult = await signOut();
+
+    setIsDeleteAccountLoading(false);
+
+    if (!signOutResult.success) {
+      router.replace("/(auth)/sign-in");
+    }
+  }, [deleteAccount, deleteAccountConfirmationText, isDeleteAccountLoading, signOut]);
 
   const ownProfileFallbackName = useMemo(() => {
     const metadataDisplayName = typeof user?.user_metadata?.display_name === "string"
@@ -965,7 +1028,18 @@ export function ProfileScreen({
             </>
           ) : null}
 
-          <View style={styles.signOutSection}>
+          <View style={styles.accountActionSection}>
+            <View style={styles.dangerZoneCard}>
+              <Text style={styles.dangerZoneTitle}>Danger Zone</Text>
+              <Text style={styles.dangerZoneText}>
+                Permanently delete your RecordQuest account and associated profile, collection, wishlist,
+                activity, check-in, achievement, follow, and push-token data.
+              </Text>
+              <Pressable style={styles.deleteAccountButton} onPress={openDeleteAccountModal} hitSlop={8}>
+                <Text style={styles.deleteAccountButtonText}>Delete Account</Text>
+              </Pressable>
+            </View>
+
             <Pressable
               style={styles.signOutButton}
               onPress={() => {
@@ -1069,6 +1143,84 @@ export function ProfileScreen({
         </>
       )}
     </ScrollView>
+    <Modal
+      transparent
+      visible={isDeleteAccountModalOpen}
+      animationType="fade"
+      onRequestClose={closeDeleteAccountModal}
+    >
+      <Pressable
+        style={styles.deleteAccountModalOverlay}
+        onPress={() => {
+          if (!isDeleteAccountLoading) {
+            closeDeleteAccountModal();
+          }
+        }}
+      >
+        <Pressable style={styles.deleteAccountModalCard} onPress={() => {}}>
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            <Text style={styles.deleteAccountModalTitle}>Delete your account?</Text>
+            <Text style={styles.deleteAccountModalText}>
+              This is permanent. Your RecordQuest profile and associated account data will be deleted.
+              You will need to sign in again to create a new account.
+            </Text>
+
+            <Text style={styles.deleteAccountModalPrompt}>Type DELETE to continue</Text>
+            <TextInput
+              style={styles.deleteAccountInput}
+              value={deleteAccountConfirmationText}
+              onChangeText={setDeleteAccountConfirmationText}
+              editable={!isDeleteAccountLoading}
+              placeholder="DELETE"
+              placeholderTextColor="#A7A1BD"
+              autoCapitalize="characters"
+              autoCorrect={false}
+              returnKeyType="done"
+              onSubmitEditing={() => {
+                void confirmDeleteAccount();
+              }}
+            />
+
+            {isDeleteAccountLoading ? (
+              <View style={styles.deleteAccountLoadingRow}>
+                <ActivityIndicator size="small" color="#FCA5A5" />
+                <Text style={styles.deleteAccountLoadingText}>Deleting account...</Text>
+              </View>
+            ) : null}
+
+            {deleteAccountError ? <Text style={styles.deleteAccountErrorText}>{deleteAccountError}</Text> : null}
+            {deleteAccountSuccess ? <Text style={styles.deleteAccountSuccessText}>{deleteAccountSuccess}</Text> : null}
+
+            <View style={styles.deleteAccountModalActions}>
+              <Pressable
+                style={styles.deleteAccountModalSecondaryButton}
+                onPress={() => {
+                  void signOut();
+                }}
+                disabled={isDeleteAccountLoading}
+              >
+                <Text style={styles.deleteAccountModalSecondaryButtonText}>Sign Out</Text>
+              </Pressable>
+
+              <Pressable
+                style={[
+                  styles.deleteAccountModalPrimaryButton,
+                  isDeleteAccountLoading || deleteAccountConfirmationText.trim() !== "DELETE"
+                    ? styles.deleteAccountModalPrimaryButtonDisabled
+                    : null,
+                ]}
+                onPress={() => {
+                  void confirmDeleteAccount();
+                }}
+                disabled={isDeleteAccountLoading || deleteAccountConfirmationText.trim() !== "DELETE"}
+              >
+                <Text style={styles.deleteAccountModalPrimaryButtonText}>Delete Forever</Text>
+              </Pressable>
+            </View>
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
     <Modal
       transparent
       visible={!!selectedFeatureTile}
@@ -1661,10 +1813,149 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
-  signOutSection: {
+  accountActionSection: {
     marginTop: 36,
     marginBottom: 36,
+    gap: 12,
+  },
+  dangerZoneCard: {
+    borderWidth: 1,
+    borderColor: "rgba(248, 113, 113, 0.24)",
+    backgroundColor: "rgba(24, 12, 18, 0.96)",
+    borderRadius: 18,
+    padding: 16,
+  },
+  dangerZoneTitle: {
+    color: "#FFF4D6",
+    fontSize: 15,
+    fontWeight: "800",
+    marginBottom: 6,
+  },
+  dangerZoneText: {
+    color: "#CFC7E6",
+    fontSize: 12,
+    lineHeight: 18,
+    marginBottom: 14,
+  },
+  deleteAccountButton: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: "rgba(248, 113, 113, 0.42)",
+    backgroundColor: "rgba(248, 113, 113, 0.16)",
+  },
+  deleteAccountButtonText: {
+    color: "#FEE2E2",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  signOutSection: {
     alignItems: "center",
+  },
+  deleteAccountModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(3, 2, 8, 0.76)",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+  deleteAccountModalCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(248, 113, 113, 0.28)",
+    backgroundColor: "rgba(14, 12, 18, 0.98)",
+    padding: 18,
+    maxHeight: "82%",
+  },
+  deleteAccountModalTitle: {
+    color: "#FFF4D6",
+    fontSize: 20,
+    fontWeight: "800",
+    marginBottom: 8,
+  },
+  deleteAccountModalText: {
+    color: "#D0C9DF",
+    fontSize: 13,
+    lineHeight: 20,
+    marginBottom: 14,
+  },
+  deleteAccountModalPrompt: {
+    color: "#F8EED4",
+    fontSize: 12,
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  deleteAccountInput: {
+    backgroundColor: "rgba(20, 18, 38, 0.94)",
+    color: "#F8EED4",
+    borderRadius: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: "rgba(248, 113, 113, 0.24)",
+    fontWeight: "700",
+    letterSpacing: 1,
+  },
+  deleteAccountLoadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 12,
+  },
+  deleteAccountLoadingText: {
+    color: "#FCA5A5",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  deleteAccountErrorText: {
+    color: "#FCA5A5",
+    fontSize: 12,
+    marginTop: 12,
+    lineHeight: 18,
+  },
+  deleteAccountSuccessText: {
+    color: "#86EFAC",
+    fontSize: 12,
+    marginTop: 12,
+    lineHeight: 18,
+  },
+  deleteAccountModalActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+  },
+  deleteAccountModalSecondaryButton: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.10)",
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+  },
+  deleteAccountModalSecondaryButtonText: {
+    color: "#F8EED4",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  deleteAccountModalPrimaryButton: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(248, 113, 113, 0.42)",
+    backgroundColor: "rgba(248, 113, 113, 0.20)",
+  },
+  deleteAccountModalPrimaryButtonDisabled: {
+    opacity: 0.45,
+  },
+  deleteAccountModalPrimaryButtonText: {
+    color: "#FEE2E2",
+    fontSize: 12,
+    fontWeight: "800",
   },
   signOutButton: {
     paddingVertical: 12,

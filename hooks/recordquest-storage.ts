@@ -260,6 +260,32 @@ export async function saveRecordQuestState(state: RecordQuestState, options?: Sa
   }
 }
 
+export async function clearLocalUserData(userId?: string | null): Promise<void> {
+  const normalizedUserId = normalizeUserId(userId);
+
+  const keysToRemove = [
+    RECORDS_KEY,
+    WISHLIST_KEY,
+    ACTIVITY_KEY,
+    STORE_CHECKINS_KEY,
+  ];
+
+  if (normalizedUserId) {
+    keysToRemove.push(
+      getUserScopedStorageKey(RECORDS_KEY, normalizedUserId),
+      getUserScopedStorageKey(WISHLIST_KEY, normalizedUserId),
+      getUserScopedStorageKey(ACTIVITY_KEY, normalizedUserId),
+      getUserScopedStorageKey(STORE_CHECKINS_KEY, normalizedUserId)
+    );
+  }
+
+  try {
+    await AsyncStorage.multiRemove(keysToRemove);
+  } catch (error) {
+    console.warn("[RecordQuest][storage] failed to clear local user data:", error);
+  }
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 // TODO: ACCOUNTS PHASE – Supabase Cloud Sync Functions
 // These functions will be implemented in Phase 2.1 (Supabase Setup)

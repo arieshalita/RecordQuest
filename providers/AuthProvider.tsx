@@ -14,6 +14,7 @@ import {
   onAuthStateChange,
   signInWithEmail,
   resendSignupConfirmationEmail,
+  deleteAccount as supabaseDeleteAccount,
   signOut as supabaseSignOut,
   signUpWithEmail,
   type AuthResponse,
@@ -22,6 +23,7 @@ import {
   completeOwnUsername,
   ensureOwnProfileFromAuthMetadata,
 } from "../hooks/profile-identity";
+import { clearLocalUserData } from "../hooks/recordquest-storage";
 
 type AuthFlowResult = AuthResponse & {
   usernameSetupRequired?: boolean;
@@ -39,6 +41,7 @@ interface AuthContextValue {
   signUp: (email: string, password: string, username?: string) => Promise<AuthFlowResult>;
   resendConfirmationEmail: (email: string) => Promise<AuthResponse>;
   signOut: () => Promise<AuthResponse>;
+  deleteAccount: () => Promise<AuthResponse>;
   retryProfileSetup: () => Promise<void>;
   completeUsername: (username: string) => Promise<{ success: boolean; error?: string }>;
 }
@@ -357,6 +360,29 @@ export function AuthProvider({ children }: PropsWithChildren) {
         }
 
         return result;
+      },
+      deleteAccount: async () => {
+        const currentUserId = session?.user?.id ?? user?.id ?? null;
+
+        if (!currentUserId) {
+          return {
+            success: false,
+            error: "You must be signed in to delete your account.",
+          };
+        }
+
+        const result = await supabaseDeleteAccount();
+
+        if (!result.success) {
+          return result;
+        }
+
+        await clearLocalUserData(currentUserId);
+        await resetStaySignedInPreference();
+
+        return {
+          success: true,
+        };
       },
       retryProfileSetup: async () => {
         if (!session?.user) {

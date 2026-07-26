@@ -75,6 +75,13 @@ export interface AuthResponse {
   session?: Session | null;
 }
 
+type DeleteAccountFunctionResponse = {
+  ok?: boolean;
+  deleted?: boolean;
+  reason?: string;
+  detail?: string;
+};
+
 export function getAuthRedirectUrl(path = "auth/callback"): string {
   return Linking.createURL(path, { scheme: "recordquest" });
 }
@@ -277,6 +284,68 @@ export async function signOut(): Promise<AuthResponse> {
     return {
       success: false,
       error: err instanceof Error ? err.message : "Unknown signout error",
+    };
+  }
+}
+
+export async function deleteAccount(): Promise<AuthResponse> {
+  try {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      logAuthError("deleteAccount.getSession", sessionError);
+      return { success: false, error: "You must be signed in to delete your account." };
+    }
+
+    if (!sessionData.session?.access_token) {
+      return { success: false, error: "You must be signed in to delete your account." };
+    }
+
+    const accessToken = sessionData.session.access_token.trim();
+    if (!accessToken) {
+      return { success: false, error: "You must be signed in to delete your account." };
+    }
+
+    const { data, error } = await supabase.functions.invoke("delete-account", {
+      body: {},
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    if (error) {
+      logAuthError("deleteAccount.invoke", error);
+      return { success: false, error: error.message || "We couldn't delete your account right now." };
+    }
+
+    const response = (data as DeleteAccountFunctionResponse | null) ?? null;
+
+    if (!response?.ok || !response.deleted) {
+      const reason = response?.reason ?? "account_deletion_failed";
+
+      if (reason === "unauthorized") {
+        return {
+          success: false,
+          error: "Your session expired. Please sign in again before deleting your account.",
+        };
+      }
+
+      return {
+        success: false,
+        error: "RecordQuest couldn't delete your account right now. Please try again.",
+      };
+    }
+
+    return {
+      success: true,
+      user: sessionData.session.user,
+      session: sessionData.session,
+    };
+  } catch (err: unknown) {
+    logAuthError("deleteAccount", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown account deletion error",
     };
   }
 }
