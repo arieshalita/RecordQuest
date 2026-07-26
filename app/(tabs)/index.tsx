@@ -8,6 +8,8 @@ import {
   Pressable,
   TextInput,
   ScrollView,
+  Modal,
+  KeyboardAvoidingView,
   ActivityIndicator,
   Linking,
   Platform,
@@ -59,6 +61,13 @@ import {
   persistAchievementEarnedAt,
 } from "../../hooks/recordquest-supabase-service";
 import { isValidAlbumArtUrl, normalizeAlbumArtUrlOrNull } from "../../utils/album-art";
+import {
+  createAutocompleteSessionToken,
+  fetchLocationPredictions,
+  resolveLocationPrediction,
+  type LocationPrediction,
+  type ResolvedLocationResult,
+} from "../../utils/location-search";
 
 const starterRecords: RecordItem[] = [
   {
@@ -87,6 +96,15 @@ const curatedFallbackStores: StoreItem[] = getCuratedFallbackStores();
 const FOLLOWING_FEED_REFRESH_COOLDOWN_MS = 45000;
 const ALBUM_TYPEAHEAD_MIN_CHARS = 2;
 const ALBUM_TYPEAHEAD_DEBOUNCE_MS = 380;
+const STORE_LOCATION_MIN_CHARS = 3;
+const STORE_LOCATION_DEBOUNCE_MS = 320;
+
+type StoreBrowseLocation = {
+  mode: "current" | "manual";
+  label: string;
+  latitude?: number;
+  longitude?: number;
+};
 
 // ═════════════════════════════════════════════════════════════════════════
 // TODO: ACCOUNTS PHASE – Authentication Integration Points
@@ -159,6 +177,15 @@ export default function App() {
   const [isLoadingStores, setIsLoadingStores] = useState(false);
   const [hasLoadedStores, setHasLoadedStores] = useState(false);
   const [storesViewMode, setStoresViewMode] = useState<"all" | "visited">("all");
+  const [storeBrowseLocation, setStoreBrowseLocation] = useState<StoreBrowseLocation>({
+    mode: "current",
+    label: "Current Location",
+  });
+  const [isStoreLocationSheetOpen, setIsStoreLocationSheetOpen] = useState(false);
+  const [storeLocationSearchText, setStoreLocationSearchText] = useState("");
+  const [storeLocationPredictions, setStoreLocationPredictions] = useState<LocationPrediction[]>([]);
+  const [isStoreLocationSearching, setIsStoreLocationSearching] = useState(false);
+  const [storeLocationSearchError, setStoreLocationSearchError] = useState<string | null>(null);
   const [storeCheckInMutationStoreId, setStoreCheckInMutationStoreId] = useState<string | null>(null);
   const [storeCheckInError, setStoreCheckInError] = useState<string | null>(null);
   const [recordStateSource, setRecordStateSource] = useState<"cloud" | "local">("local");
@@ -211,6 +238,10 @@ export default function App() {
   const detailOpenRequestIdRef = useRef(0);
   const detailOpenStartedAtRef = useRef<number | null>(null);
   const detailRecordVisibleLoggedRequestIdRef = useRef<number | null>(null);
+  const storeDiscoveryRequestIdRef = useRef(0);
+  const storeLocationAutocompleteRequestIdRef = useRef(0);
+  const storeLocationResolveRequestIdRef = useRef(0);
+  const storeLocationSessionTokenRef = useRef(createAutocompleteSessionToken());
 
   const shouldUseCloudBadgeData = isSupabaseDataModeEnabled() && !!user;
   const badgeRecords = shouldUseCloudBadgeData && recordStateSource !== "cloud" ? [] : records;
@@ -343,43 +374,76 @@ export default function App() {
     setDataReloadNonce((current) => current + 1);
   }, []);
 
-  const loadNearbyStores = useCallback(async (invalidateCacheForCurrentLocation: boolean) => {
-    console.log("[RecordQuest][stores] loading started", {
-      refresh: invalidateCacheForCurrentLocation,
-    });
+  const loadNearbyStores = useCallback(
+    async (invalidateCacheForCurrentLocation: boolean, browseLocationOverride?: StoreBrowseLocation) => {
+      const requestId = storeDiscoveryRequestIdRef.current + 1;
+      storeDiscoveryRequestIdRef.current = requestId;
 
-    setIsLoadingStores(true);
-    if (invalidateCacheForCurrentLocation) {
-      setStoresMessage("Refreshing nearby stores...");
-    }
-
-    let result: StoreDiscoveryResult = {
-      stores: curatedFallbackStores,
-      notice: "Showing recommended record stores near you.",
-      usingFallback: true,
-    };
-
-    try {
-      result = await discoverNearbyStores({
-        forceRefresh: invalidateCacheForCurrentLocation,
+      const selectedBrowseLocation = browseLocationOverride ?? storeBrowseLocation;
+      console.log("[RecordQuest][stores] loading started", {
+        refresh: invalidateCacheForCurrentLocation,
+        mode: selectedBrowseLocation.mode,
       });
-    } catch {
-      result = {
+
+      setIsLoadingStores(true);
+      if (invalidateCacheForCurrentLocation) {
+        setStoresMessage("Refreshing nearby stores...");
+      }
+
+      let result: StoreDiscoveryResult = {
         stores: curatedFallbackStores,
         notice: "Showing recommended record stores near you.",
         usingFallback: true,
       };
-    } finally {
+
+      try {
+        result = await discoverNearbyStores({
+          forceRefresh: invalidateCacheForCurrentLocation,
+          browseLocation:
+            selectedBrowseLocation.mode === "manual" && typeof selectedBrowseLocation.latitude === "number" && typeof selectedBrowseLocation.longitude === "number"
+              ? {
+                  latitude: selectedBrowseLocation.latitude,
+                  longitude: selectedBrowseLocation.longitude,
+                  label: selectedBrowseLocation.label,
+                }
+              : undefined,
+        });
+      } catch {
+        result = {
+          stores: curatedFallbackStores,
+          notice: "Showing recommended record stores near you.",
+          usingFallback: true,
+        };
+      }
+
+      if (requestId !== storeDiscoveryRequestIdRef.current) {
+        return;
+      }
+
       setStores(result.stores);
       setStoresMessage(result.notice);
       setHasLoadedStores(true);
       setIsLoadingStores(false);
+
+      if (__DEV__) {
+        console.log("[RecordQuest][stores] discovery summary", {
+          mode: selectedBrowseLocation.mode,
+          label: selectedBrowseLocation.label,
+          latitude: typeof selectedBrowseLocation.latitude === "number" ? Number(selectedBrowseLocation.latitude.toFixed(2)) : null,
+          longitude: typeof selectedBrowseLocation.longitude === "number" ? Number(selectedBrowseLocation.longitude.toFixed(2)) : null,
+          resultCount: result.stores.length,
+          usingFallback: result.usingFallback,
+        });
+      }
+
       console.log("[RecordQuest][stores] loading ended", {
         usingFallback: result.usingFallback,
         refresh: invalidateCacheForCurrentLocation,
+        mode: selectedBrowseLocation.mode,
       });
-    }
-  }, []);
+    },
+    [storeBrowseLocation]
+  );
 
   const refreshNearbyStores = useCallback(() => {
     if (isLoadingStores) {
@@ -388,6 +452,132 @@ export default function App() {
 
     void loadNearbyStores(true);
   }, [isLoadingStores, loadNearbyStores]);
+
+  const openStoreLocationSheet = useCallback(() => {
+    storeLocationSessionTokenRef.current = createAutocompleteSessionToken();
+    storeLocationAutocompleteRequestIdRef.current += 1;
+    storeLocationResolveRequestIdRef.current += 1;
+    setStoreLocationSearchText("");
+    setStoreLocationPredictions([]);
+    setStoreLocationSearchError(null);
+    setIsStoreLocationSearching(false);
+    setIsStoreLocationSheetOpen(true);
+  }, []);
+
+  const closeStoreLocationSheet = useCallback(() => {
+    setIsStoreLocationSheetOpen(false);
+    setStoreLocationSearchError(null);
+    setStoreLocationPredictions([]);
+    setIsStoreLocationSearching(false);
+  }, []);
+
+  const useCurrentStoreLocation = useCallback(async () => {
+    const currentLocation: StoreBrowseLocation = {
+      mode: "current",
+      label: "Current Location",
+    };
+
+    setStoreBrowseLocation(currentLocation);
+    closeStoreLocationSheet();
+    await loadNearbyStores(true, currentLocation);
+  }, [closeStoreLocationSheet, loadNearbyStores]);
+
+  const selectStoreLocationPrediction = useCallback(
+    async (prediction: LocationPrediction) => {
+      const requestId = storeLocationResolveRequestIdRef.current + 1;
+      storeLocationResolveRequestIdRef.current = requestId;
+      setStoreLocationSearchError(null);
+      setIsStoreLocationSearching(true);
+
+      try {
+        const resolved = await resolveLocationPrediction(prediction, storeLocationSessionTokenRef.current);
+
+        if (requestId !== storeLocationResolveRequestIdRef.current) {
+          return;
+        }
+
+        const manualLocation: StoreBrowseLocation = {
+          mode: "manual",
+          label: resolved.label,
+          latitude: resolved.latitude,
+          longitude: resolved.longitude,
+        };
+
+        setStoreBrowseLocation(manualLocation);
+        closeStoreLocationSheet();
+        setStoreLocationSearchText("");
+        setStoreLocationPredictions([]);
+        storeLocationSessionTokenRef.current = createAutocompleteSessionToken();
+        await loadNearbyStores(true, manualLocation);
+      } catch (error) {
+        if (requestId !== storeLocationResolveRequestIdRef.current) {
+          return;
+        }
+
+        setStoreLocationSearchError(
+          error instanceof Error ? error.message : "Unable to resolve that location right now."
+        );
+      } finally {
+        if (requestId === storeLocationResolveRequestIdRef.current) {
+          setIsStoreLocationSearching(false);
+        }
+      }
+    },
+    [closeStoreLocationSheet, loadNearbyStores]
+  );
+
+  useEffect(() => {
+    if (!isStoreLocationSheetOpen) {
+      return;
+    }
+
+    const trimmedSearchText = storeLocationSearchText.trim();
+    if (trimmedSearchText.length < STORE_LOCATION_MIN_CHARS) {
+      storeLocationAutocompleteRequestIdRef.current += 1;
+      setStoreLocationPredictions([]);
+      setStoreLocationSearchError(null);
+      setIsStoreLocationSearching(false);
+      return;
+    }
+
+    const requestId = storeLocationAutocompleteRequestIdRef.current + 1;
+    storeLocationAutocompleteRequestIdRef.current = requestId;
+    setIsStoreLocationSearching(true);
+    setStoreLocationSearchError(null);
+
+    const timeoutId = setTimeout(() => {
+      void fetchLocationPredictions(trimmedSearchText, storeLocationSessionTokenRef.current)
+        .then((predictions) => {
+          if (requestId !== storeLocationAutocompleteRequestIdRef.current) {
+            return;
+          }
+
+          setStoreLocationPredictions(predictions);
+          if (predictions.length === 0) {
+            setStoreLocationSearchError("No matching locations found.");
+          }
+        })
+        .catch((error) => {
+          if (requestId !== storeLocationAutocompleteRequestIdRef.current) {
+            return;
+          }
+
+          setStoreLocationPredictions([]);
+          setStoreLocationSearchError(
+            error instanceof Error ? error.message : "Location search is temporarily unavailable."
+          );
+        })
+        .finally(() => {
+          if (requestId === storeLocationAutocompleteRequestIdRef.current) {
+            setIsStoreLocationSearching(false);
+          }
+        });
+    }, STORE_LOCATION_DEBOUNCE_MS);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [isStoreLocationSheetOpen, storeLocationSearchText]);
 
   useEffect(() => {
     const requestId = dataLoadRequestIdRef.current + 1;
@@ -1788,12 +1978,38 @@ export default function App() {
           <Text style={styles.screenSubtitle}>
             {storesViewMode === "visited"
               ? "Stores you have checked into"
-              : "Nearby record stores and music shops"}
+              : storeBrowseLocation.mode === "manual"
+                ? `Browsing record stores near ${storeBrowseLocation.label}`
+                : "Nearby record stores and music shops"}
           </Text>
+          {storesViewMode !== "visited" ? (
+            <View style={styles.storeLocationWrap}>
+              <Pressable style={styles.storeLocationPill} onPress={openStoreLocationSheet}>
+                <Text style={styles.storeLocationPillText}>
+                  {storeBrowseLocation.mode === "current"
+                    ? "Near: Current Location"
+                    : `Near: ${storeBrowseLocation.label}`}
+                </Text>
+                <Text style={styles.storeLocationPillAction}>
+                  {storeBrowseLocation.mode === "current" ? "Change" : "Edit"}
+                </Text>
+              </Pressable>
+
+              {storeBrowseLocation.mode === "manual" ? (
+                <Pressable style={styles.storeLocationResetButton} onPress={() => { void useCurrentStoreLocation(); }}>
+                  <Text style={styles.storeLocationResetButtonText}>Use Current Location</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ) : null}
           {isLoadingStores ? (
             <View style={styles.storeLoadingRow}>
               <ActivityIndicator size="small" color="#A78BFA" />
-              <Text style={styles.storeStatusText}>Finding nearby stores...</Text>
+              <Text style={styles.storeStatusText}>
+                {storeBrowseLocation.mode === "manual"
+                  ? `Finding nearby stores near ${storeBrowseLocation.label}...`
+                  : "Finding nearby stores..."}
+              </Text>
             </View>
           ) : null}
           {storeCheckInError ? <Text style={styles.storeStatusErrorText}>{storeCheckInError}</Text> : null}
@@ -1806,7 +2022,9 @@ export default function App() {
               <Text style={styles.emptyFeatureText}>
                 {storesViewMode === "visited"
                   ? "Check in at a store to see it here."
-                  : "Try adjusting your location"}
+                  : storeBrowseLocation.mode === "manual"
+                    ? `Try a different location near ${storeBrowseLocation.label}`
+                    : "Try adjusting your location"}
               </Text>
             </View>
           ) : (
@@ -1846,6 +2064,74 @@ export default function App() {
           )}
         </ScrollView>
       )}
+
+      <Modal transparent visible={isStoreLocationSheetOpen} animationType="fade" onRequestClose={closeStoreLocationSheet}>
+        <View style={styles.storeLocationSheetBackdrop}>
+          <Pressable style={styles.storeLocationSheetTapTarget} onPress={closeStoreLocationSheet} />
+          <KeyboardAvoidingView
+            style={styles.storeLocationSheetKeyboardWrap}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            <View style={styles.storeLocationSheetCard}>
+              <View style={styles.storeLocationSheetHeader}>
+                <Text style={styles.storeLocationSheetTitle}>Browse another location</Text>
+                <Pressable style={styles.storeLocationSheetCloseButton} onPress={closeStoreLocationSheet}>
+                  <Text style={styles.storeLocationSheetCloseButtonText}>Close</Text>
+                </Pressable>
+              </View>
+
+              <Pressable style={styles.storeLocationCurrentButton} onPress={() => { void useCurrentStoreLocation(); }}>
+                <Text style={styles.storeLocationCurrentButtonText}>Use Current Location</Text>
+              </Pressable>
+
+              <TextInput
+                style={styles.storeLocationInput}
+                value={storeLocationSearchText}
+                onChangeText={setStoreLocationSearchText}
+                placeholder="Enter city, ZIP code, or address"
+                placeholderTextColor="#A7A1BD"
+                autoCorrect={false}
+                autoCapitalize="words"
+                returnKeyType="search"
+                onSubmitEditing={() => {
+                  const firstPrediction = storeLocationPredictions[0];
+                  if (firstPrediction) {
+                    void selectStoreLocationPrediction(firstPrediction);
+                  }
+                }}
+              />
+
+              {isStoreLocationSearching ? (
+                <View style={styles.storeLocationSearchingRow}>
+                  <ActivityIndicator size="small" color="#A78BFA" />
+                  <Text style={styles.storeLocationSearchingText}>Searching locations...</Text>
+                </View>
+              ) : null}
+
+              {storeLocationSearchError ? <Text style={styles.storeLocationErrorText}>{storeLocationSearchError}</Text> : null}
+
+              {storeLocationPredictions.length > 0 ? (
+                <ScrollView style={styles.storeLocationPredictionList} keyboardShouldPersistTaps="handled">
+                  {storeLocationPredictions.map((prediction) => (
+                    <Pressable
+                      key={prediction.placeId}
+                      style={styles.storeLocationPredictionCard}
+                      onPress={() => {
+                        void selectStoreLocationPrediction(prediction);
+                      }}
+                    >
+                      <Text style={styles.storeLocationPredictionTitle}>{prediction.primaryText}</Text>
+                      {prediction.secondaryText ? (
+                        <Text style={styles.storeLocationPredictionSubtitle}>{prediction.secondaryText}</Text>
+                      ) : null}
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              ) : null}
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
 
       <View
         style={[
@@ -2554,6 +2840,47 @@ const styles = StyleSheet.create({
     gap: 14,
     marginBottom: 16,
   },
+  storeLocationWrap: {
+    marginBottom: 12,
+    gap: 8,
+  },
+  storeLocationPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    backgroundColor: "rgba(16, 18, 25, 0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.22)",
+  },
+  storeLocationPillText: {
+    color: "#FFF4D6",
+    fontSize: 12,
+    fontWeight: "800",
+    flex: 1,
+  },
+  storeLocationPillAction: {
+    color: "#C7B6FF",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  storeLocationResetButton: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.30)",
+    backgroundColor: "rgba(124, 58, 237, 0.14)",
+  },
+  storeLocationResetButtonText: {
+    color: "#E9DFFF",
+    fontSize: 11,
+    fontWeight: "700",
+  },
   storeLoadingRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -2577,6 +2904,119 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginBottom: 8,
     fontWeight: "500",
+  },
+  storeLocationSheetBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(5, 5, 9, 0.72)",
+    justifyContent: "flex-end",
+  },
+  storeLocationSheetTapTarget: {
+    flex: 1,
+  },
+  storeLocationSheetKeyboardWrap: {
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+  },
+  storeLocationSheetCard: {
+    backgroundColor: "rgba(18, 16, 38, 0.98)",
+    borderRadius: 28,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.22)",
+    shadowColor: "#000",
+    shadowOpacity: 0.2,
+    shadowRadius: 24,
+    elevation: 12,
+  },
+  storeLocationSheetHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+    gap: 12,
+  },
+  storeLocationSheetTitle: {
+    color: "#FFF4D6",
+    fontSize: 16,
+    fontWeight: "900",
+    flex: 1,
+  },
+  storeLocationSheetCloseButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.12)",
+  },
+  storeLocationSheetCloseButtonText: {
+    color: "#FFF4D6",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  storeLocationCurrentButton: {
+    borderRadius: 16,
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(124, 58, 237, 0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.36)",
+    marginBottom: 12,
+  },
+  storeLocationCurrentButtonText: {
+    color: "#FFF4D6",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  storeLocationInput: {
+    backgroundColor: "rgba(10, 10, 18, 0.92)",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.12)",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: "#FFF4D6",
+    fontSize: 14,
+  },
+  storeLocationSearchingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 12,
+  },
+  storeLocationSearchingText: {
+    color: "#C7C7D1",
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  storeLocationErrorText: {
+    color: "#FCA5A5",
+    fontSize: 12,
+    marginTop: 10,
+  },
+  storeLocationPredictionList: {
+    maxHeight: 250,
+    marginTop: 12,
+  },
+  storeLocationPredictionCard: {
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 8,
+    backgroundColor: "rgba(16, 18, 25, 0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.10)",
+  },
+  storeLocationPredictionTitle: {
+    color: "#FFF4D6",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  storeLocationPredictionSubtitle: {
+    color: "#A7A1BD",
+    fontSize: 11,
+    marginTop: 4,
   },
   storeMetaText: {
     color: "#c8bda7",

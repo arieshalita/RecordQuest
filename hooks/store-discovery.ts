@@ -1,6 +1,12 @@
 import { Platform } from "react-native";
 import * as Location from "expo-location";
 import type { StoreItem } from "./types";
+import {
+  buildStoreDedupFallbackKey,
+  normalizeStoreName,
+  normalizeStoreAddress,
+  scoreGoogleStoreRelevance,
+} from "../utils/store-relevance";
 
 type OverpassElement = {
   id: number;
@@ -34,6 +40,7 @@ type GooglePlace = {
   location?: GooglePlacesLocation;
   businessStatus?: string;
   types?: string[];
+  primaryType?: string;
 };
 
 type GooglePlacesTextSearchResponse = {
@@ -53,16 +60,9 @@ type RankedStore = StoreItem & {
   _confidence: "high" | "medium" | "low";
 };
 
-type GoogleStoreRelevance = {
-  tier: number;
-  score: number;
-};
-
-type GoogleStoreSignals = {
-  hasNameRecordSignal: boolean;
-  hasTypeRecordSignal: boolean;
-  hasNameMusicSignal: boolean;
-  hasKnownMediaVinylSignal: boolean;
+type GooglePlaceCandidate = {
+  place: GooglePlace;
+  matchedQueries: string[];
 };
 
 type RankedCuratedStore = StoreItem & {
@@ -88,6 +88,17 @@ export type StoreDiscoveryResult = {
   stores: StoreItem[];
   notice: string;
   usingFallback: boolean;
+};
+
+export type StoreDiscoveryBrowseLocation = {
+  latitude: number;
+  longitude: number;
+  label?: string;
+};
+
+export type StoreDiscoveryOptions = {
+  forceRefresh?: boolean;
+  browseLocation?: StoreDiscoveryBrowseLocation;
 };
 
 class StoreDiscoveryError extends Error {
@@ -116,11 +127,11 @@ const ENABLE_OSM_SUPPLEMENTAL_FOR_BETA = false;
 const GOOGLE_PLACES_TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText";
 const GOOGLE_PLACES_TEXT_QUERIES = [
   "record store",
-  "vinyl records",
-  "music store vinyl",
+  "vinyl record store",
+  "used record store",
 ];
 const GOOGLE_PLACES_FIELD_MASK =
-  "places.id,places.displayName,places.formattedAddress,places.location,places.businessStatus,places.types";
+  "places.id,places.displayName,places.formattedAddress,places.location,places.businessStatus,places.types,places.primaryType";
 const GOOGLE_PLACES_PAGE_SIZE = 14;
 const GOOGLE_BETA_RADIUS_METERS = SEARCH_RADIUS_METERS;
 const GOOGLE_PLACES_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY?.trim();
@@ -330,25 +341,7 @@ function formatDistanceMiles(distanceMiles: number): string {
 }
 
 function normalizeStoreDedupKey(name: string, address: string): string {
-  const normalizedName = name.trim().toLowerCase().replace(/\s+/g, " ");
-  const normalizedAddress = address.trim().toLowerCase().replace(/\s+/g, " ");
-  return `${normalizedName}::${normalizedAddress}`;
-}
-
-function normalizeStoreName(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[.,'’`]/g, "")
-    .replace(/\s+/g, " ");
-}
-
-function normalizeStoreAddress(address: string): string {
-  return address
-    .trim()
-    .toLowerCase()
-    .replace(/[.,'’`#]/g, "")
-    .replace(/\s+/g, " ");
+  return buildStoreDedupFallbackKey(name, address);
 }
 
 function shouldExcludeStoreCandidate(name: string, address: string): boolean {
@@ -391,62 +384,6 @@ function getStorePriorityPenalty(store: Pick<CuratedStoreSeed, "storeCategory">)
 function getGoogleCacheKey(latitude: number, longitude: number): string {
   // Round to keep cache stable for small GPS drift while staying location-specific.
   return `${GOOGLE_CACHE_VERSION}:${latitude.toFixed(2)}:${longitude.toFixed(2)}`;
-}
-
-function getGoogleStoreSignalBonus(place: Pick<GooglePlace, "displayName" | "types">): number {
-  const name = (place.displayName?.text ?? "").toLowerCase();
-  const types = (place.types ?? []).map((type) => type.toLowerCase());
-
-  let bonus = 0;
-
-  if (/record|vinyl|lp/.test(name)) {
-    bonus += 0.24;
-  }
-
-  if (types.some((type) => /record|music/.test(type))) {
-    bonus += 0.14;
-  }
-
-  if (name.includes("newbury comics")) {
-    bonus += 0.08;
-  }
-
-  return Math.min(0.34, bonus);
-}
-
-function getGoogleStoreSignals(place: Pick<GooglePlace, "displayName" | "types">): GoogleStoreSignals {
-  const name = (place.displayName?.text ?? "").toLowerCase();
-  const types = (place.types ?? []).map((type) => type.toLowerCase());
-
-  return {
-    hasNameRecordSignal: /record|vinyl|lp/.test(name),
-    hasTypeRecordSignal: types.some((type) => /record|music/.test(type)),
-    hasNameMusicSignal: /music/.test(name),
-    hasKnownMediaVinylSignal: name.includes("newbury comics"),
-  };
-}
-
-function getGoogleStoreRelevance(place: Pick<GooglePlace, "displayName" | "types">): GoogleStoreRelevance {
-  const signals = getGoogleStoreSignals(place);
-  const category = getGoogleStoreCategory(place);
-
-  if (category === "record-store" && signals.hasNameRecordSignal) {
-    return { tier: 4, score: 460 };
-  }
-
-  if (category === "record-store" && signals.hasTypeRecordSignal) {
-    return { tier: 3, score: 360 };
-  }
-
-  if (category === "record-store" && signals.hasNameMusicSignal) {
-    return { tier: 2, score: 300 };
-  }
-
-  if (category === "media-store" && (signals.hasNameRecordSignal || signals.hasTypeRecordSignal || signals.hasKnownMediaVinylSignal)) {
-    return { tier: 1, score: 200 };
-  }
-
-  return { tier: 0, score: 0 };
 }
 
 function clampLatitude(latitude: number): number {
@@ -508,32 +445,6 @@ function getGoogleStoreCategory(place: Pick<GooglePlace, "displayName" | "types"
   return "record-store";
 }
 
-function hasGoogleMusicSignal(place: Pick<GooglePlace, "displayName" | "formattedAddress" | "types">): boolean {
-  const name = (place.displayName?.text ?? "").toLowerCase();
-  const types = (place.types ?? []).map((type) => type.toLowerCase());
-  const signals = getGoogleStoreSignals(place);
-  const category = getGoogleStoreCategory(place);
-
-  if (category === "record-store") {
-    return signals.hasNameRecordSignal || signals.hasTypeRecordSignal || signals.hasNameMusicSignal;
-  }
-
-  if (category === "media-store") {
-    return signals.hasNameRecordSignal || signals.hasTypeRecordSignal || signals.hasKnownMediaVinylSignal;
-  }
-
-  return false;
-}
-
-function shouldKeepGooglePlace(place: Pick<GooglePlace, "displayName" | "formattedAddress" | "types" | "businessStatus">): boolean {
-  const businessStatus = (place.businessStatus ?? "").toUpperCase();
-  if (businessStatus === "CLOSED_PERMANENTLY") {
-    return false;
-  }
-
-  return hasGoogleMusicSignal(place);
-}
-
 function getGoogleBusinessSummary(businessStatus?: string): string {
   if (!businessStatus) return "Google Places result";
 
@@ -550,10 +461,14 @@ function getGoogleBusinessSummary(businessStatus?: string): string {
 }
 
 function mapGooglePlacesToStores(
-  places: GooglePlace[],
+  placeCandidates: GooglePlaceCandidate[],
   latitude: number,
   longitude: number
 ): StoreItem[] {
+  const curatedDedupKeys = new Set(
+    getCuratedSourceOfTruth().map((store) => buildStoreDedupFallbackKey(store.name, store.address))
+  );
+
   const candidates: Array<
     StoreItem & {
       _placeId: string;
@@ -561,10 +476,13 @@ function mapGooglePlacesToStores(
       _distanceMiles: number;
       _relevanceTier: number;
       _relevanceScore: number;
+      _matchedQueries: string[];
+      _relevanceReason: string;
     }
   > = [];
 
-  for (const place of places) {
+  for (const candidate of placeCandidates) {
+    const place = candidate.place;
     const placeId = place.id?.trim();
     const name = place.displayName?.text?.trim();
     const address = place.formattedAddress?.trim();
@@ -573,7 +491,29 @@ function mapGooglePlacesToStores(
 
     if (!placeId || !name || !address) continue;
     if (typeof lat !== "number" || typeof lon !== "number") continue;
-    if (!shouldKeepGooglePlace(place)) continue;
+
+    const dedupKey = buildStoreDedupFallbackKey(name, address);
+    const relevance = scoreGoogleStoreRelevance({
+      name,
+      address,
+      types: place.types,
+      businessStatus: place.businessStatus,
+      matchedQueries: candidate.matchedQueries,
+      isCuratedMatch: curatedDedupKeys.has(dedupKey),
+    });
+
+    if (!relevance.include) {
+      logStoreDev("[RecordQuest][stores] excluded google result", {
+        name,
+        placeId,
+        types: place.types ?? [],
+        primaryType: place.primaryType ?? null,
+        matchedQueries: candidate.matchedQueries,
+        score: relevance.score,
+        reason: relevance.reason,
+      });
+      continue;
+    }
 
     if (shouldExcludeStoreCandidate(name, address)) {
       logStoreDev("[RecordQuest][stores] excluded targeted false-positive result", {
@@ -586,11 +526,7 @@ function mapGooglePlacesToStores(
 
     const category = getGoogleStoreCategory(place);
     const distanceMiles = haversineDistanceMiles(latitude, longitude, lat, lon);
-    const relevance = getGoogleStoreRelevance(place);
-
-    if (relevance.tier <= 0) {
-      continue;
-    }
+    const relevanceTier = relevance.tier === "high" ? 3 : relevance.tier === "medium" ? 2 : 1;
 
     candidates.push({
       id: `google-${placeId}`,
@@ -609,16 +545,18 @@ function mapGooglePlacesToStores(
       _placeId: placeId,
       _normalizedName: normalizeStoreName(name),
       _distanceMiles: distanceMiles,
-      _relevanceTier: relevance.tier,
+      _relevanceTier: relevanceTier,
       _relevanceScore: relevance.score,
+      _matchedQueries: candidate.matchedQueries,
+      _relevanceReason: relevance.reason,
     });
   }
 
   const sortedCandidates = candidates
     .sort((a, b) => {
-      if (a._distanceMiles !== b._distanceMiles) return a._distanceMiles - b._distanceMiles;
       if (a._relevanceTier !== b._relevanceTier) return b._relevanceTier - a._relevanceTier;
       if (a._relevanceScore !== b._relevanceScore) return b._relevanceScore - a._relevanceScore;
+      if (a._distanceMiles !== b._distanceMiles) return a._distanceMiles - b._distanceMiles;
       if (a._normalizedName !== b._normalizedName) {
         return a._normalizedName.localeCompare(b._normalizedName);
       }
@@ -634,6 +572,8 @@ function mapGooglePlacesToStores(
       distanceMiles: Number(candidate._distanceMiles.toFixed(2)),
       relevanceTier: candidate._relevanceTier,
       relevanceScore: candidate._relevanceScore,
+      matchedQueries: candidate._matchedQueries,
+      reason: candidate._relevanceReason,
       placeId: candidate._placeId,
     }))
   );
@@ -681,7 +621,10 @@ async function fetchGooglePlacesNearby(latitude: number, longitude: number): Pro
         }
 
         const payload = (await response.json()) as GooglePlacesTextSearchResponse;
-        return payload.places ?? [];
+        return {
+          query: textQuery,
+          places: payload.places ?? [],
+        };
       } finally {
         clearTimeout(timeoutId);
       }
@@ -689,7 +632,7 @@ async function fetchGooglePlacesNearby(latitude: number, longitude: number): Pro
   );
 
   const successfulResults = queryResults.filter(
-    (result): result is PromiseFulfilledResult<GooglePlace[]> => result.status === "fulfilled"
+    (result): result is PromiseFulfilledResult<{ query: string; places: GooglePlace[] }> => result.status === "fulfilled"
   );
 
   if (successfulResults.length === 0) {
@@ -702,21 +645,57 @@ async function fetchGooglePlacesNearby(latitude: number, longitude: number): Pro
     }
   }
 
-  const dedupedByPlaceId = new Map<string, GooglePlace>();
+  const dedupedByPrimaryKey = new Map<string, GooglePlaceCandidate>();
+  const dedupedByFallbackKey = new Set<string>();
+
   for (const result of successfulResults) {
-    for (const place of result.value) {
+    for (const place of result.value.places) {
       const placeId = place.id?.trim();
-      if (!placeId) {
+      const name = place.displayName?.text?.trim();
+      const address = place.formattedAddress?.trim();
+
+      if (!name || !address) {
         continue;
       }
 
-      if (!dedupedByPlaceId.has(placeId)) {
-        dedupedByPlaceId.set(placeId, place);
+      const fallbackKey = buildStoreDedupFallbackKey(name, address);
+
+      if (placeId) {
+        const existing = dedupedByPrimaryKey.get(placeId);
+        if (existing) {
+          if (!existing.matchedQueries.includes(result.value.query)) {
+            existing.matchedQueries.push(result.value.query);
+          }
+          continue;
+        }
+
+        // Fallback dedupe prevents duplicate storefronts returned with different place IDs.
+        if (dedupedByFallbackKey.has(fallbackKey)) {
+          continue;
+        }
+
+        dedupedByPrimaryKey.set(placeId, {
+          place,
+          matchedQueries: [result.value.query],
+        });
+        dedupedByFallbackKey.add(fallbackKey);
+        continue;
       }
+
+      const keyWithoutPlaceId = `fallback:${fallbackKey}`;
+      if (dedupedByPrimaryKey.has(keyWithoutPlaceId) || dedupedByFallbackKey.has(fallbackKey)) {
+        continue;
+      }
+
+      dedupedByPrimaryKey.set(keyWithoutPlaceId, {
+        place,
+        matchedQueries: [result.value.query],
+      });
+      dedupedByFallbackKey.add(fallbackKey);
     }
   }
 
-  const stores = mapGooglePlacesToStores(Array.from(dedupedByPlaceId.values()), latitude, longitude);
+  const stores = mapGooglePlacesToStores(Array.from(dedupedByPrimaryKey.values()), latitude, longitude);
   if (stores.length > 0) {
     googlePlacesSessionCache.set(cacheKey, stores);
   }
@@ -1248,8 +1227,9 @@ async function requestForegroundLocationPermission(): Promise<Location.LocationP
   }
 }
 
-export async function discoverNearbyStores(options?: { forceRefresh?: boolean }): Promise<StoreDiscoveryResult> {
+export async function discoverNearbyStores(options?: StoreDiscoveryOptions): Promise<StoreDiscoveryResult> {
   const fallbackStores = getCuratedFallbackStores();
+  const manualBrowseLocation = options?.browseLocation;
 
   try {
     logStoreDev("[RecordQuest][stores] search radius miles:", metersToMiles(SEARCH_RADIUS_METERS).toFixed(1));
@@ -1259,6 +1239,34 @@ export async function discoverNearbyStores(options?: { forceRefresh?: boolean })
         stores: fallbackStores,
         notice: "Showing curated beta stores. Set Google Maps API key to enable live results.",
         usingFallback: true,
+      };
+    }
+
+    if (manualBrowseLocation) {
+      const { latitude, longitude } = manualBrowseLocation;
+
+      if (options?.forceRefresh) {
+        googlePlacesSessionCache.delete(getGoogleCacheKey(latitude, longitude));
+      }
+
+      const googleStores = await fetchGooglePlacesNearby(latitude, longitude);
+
+      if (!googleStores.length) {
+        return {
+          stores: buildCuratedFallbackStores(latitude, longitude),
+          notice: manualBrowseLocation.label
+            ? `No nearby record stores matched the selected location right now. Showing curated beta stores near ${manualBrowseLocation.label}.`
+            : "No nearby record stores matched the selected location right now. Showing curated beta stores instead.",
+          usingFallback: true,
+        };
+      }
+
+      return {
+        stores: googleStores,
+        notice: manualBrowseLocation.label
+          ? `Showing Google Places results near ${manualBrowseLocation.label}.`
+          : "Showing Google Places results.",
+        usingFallback: false,
       };
     }
 
