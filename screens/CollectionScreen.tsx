@@ -20,6 +20,7 @@ import { AlbumArt } from "../components/AlbumArt";
 import { TopBar } from "../components/TopBar";
 import { RecordQuestTheme } from "../constants/theme";
 import type { RecordItem, AlbumSearchResult } from "../hooks/types";
+import { deriveRecordFormatBadge } from "../utils/record-format-badge";
 
 type RecordListScreenProps = {
   title: string;
@@ -57,6 +58,21 @@ function parseYear(value: string | undefined): number | null {
   const trimmed = value.trim();
   const year = Number.parseInt(trimmed, 10);
   return Number.isFinite(year) ? year : null;
+}
+
+function getSearchResultFormatBadge(result: AlbumSearchResult): string | null {
+  return deriveRecordFormatBadge({
+    explicitFormat: result.format,
+    releasePrimaryType: result.format,
+    title: result.album,
+  });
+}
+
+function getRecordFormatBadge(record: RecordItem): string | null {
+  return deriveRecordFormatBadge({
+    title: record.album,
+    legacyGenre: record.genre,
+  });
 }
 
 export function RecordListScreen({
@@ -249,6 +265,7 @@ export function RecordListScreen({
   const shouldShowSearchControls = album.trim().length > 0 || isSearching || displayedSuggestions.length > 0;
   const hasSearchQuery = album.trim().length > 0;
   const showNoResultsState = hasSearchQuery && !isSearching && displayedSuggestions.length === 0 && !!searchMessage && !selectedMetadata;
+  const selectedMetadataFormatBadge = selectedMetadata ? getSearchResultFormatBadge(selectedMetadata) : null;
 
   function closeAddSheet() {
     if (isSavingAdd) {
@@ -320,35 +337,44 @@ export function RecordListScreen({
             keyboardShouldPersistTaps="always"
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.resultsListContent}
-            renderItem={({ item }) => (
-              <Pressable
-                style={({ pressed }) => [styles.resultCard, pressed ? styles.cardPressed : null]}
-                onPress={() => handleSelectResult(item)}
-              >
-                <AlbumArt
-                  uri={item.cover}
-                  style={styles.resultCover}
-                  debugScreen={isWishlist ? "wishlist" : "owner-collection"}
-                  debugRecordId={item.id}
-                  debugAlbum={item.album}
-                  debugArtist={item.artist}
-                  debugUriSource="search-result"
-                />
-                <View style={styles.resultBody}>
+            renderItem={({ item }) => {
+              const formatBadge = getSearchResultFormatBadge(item);
+              const hasYear = Boolean(item.year && item.year !== "Unknown");
+              const hasGenre = Boolean(item.genre);
+              const hasMeta = hasYear || Boolean(formatBadge) || hasGenre;
+
+              return (
+                <Pressable
+                  style={({ pressed }) => [styles.resultCard, pressed ? styles.cardPressed : null]}
+                  onPress={() => handleSelectResult(item)}
+                >
+                  <AlbumArt
+                    uri={item.cover}
+                    style={styles.resultCover}
+                    debugScreen={isWishlist ? "wishlist" : "owner-collection"}
+                    debugRecordId={item.id}
+                    debugAlbum={item.album}
+                    debugArtist={item.artist}
+                    debugUriSource="search-result"
+                  />
+                  <View style={styles.resultBody}>
                   <Text style={styles.resultTitle} numberOfLines={2}>
                     {item.album}
                   </Text>
                   <Text style={styles.resultArtist} numberOfLines={1}>
                     {item.artist}
                   </Text>
-                  <View style={styles.metaRow}>
-                    {item.year && item.year !== "Unknown" ? <Text style={styles.yearText}>{item.year}</Text> : null}
-                    {item.format ? <Text style={styles.searchFormatPill}>{item.format}</Text> : null}
-                    {item.genre ? <Text style={styles.genrePill}>{item.genre}</Text> : null}
+                  {hasMeta ? (
+                    <View style={styles.metaRow}>
+                      {hasYear ? <Text style={styles.yearText}>{item.year}</Text> : null}
+                      {formatBadge ? <Text style={styles.searchFormatPill}>{formatBadge}</Text> : null}
+                      {hasGenre ? <Text style={styles.genrePill}>{item.genre}</Text> : null}
+                    </View>
+                  ) : null}
                   </View>
-                </View>
-              </Pressable>
-            )}
+                </Pressable>
+              );
+            }}
           />
         </Animated.View>
       ) : null}
@@ -403,7 +429,12 @@ export function RecordListScreen({
             <Text style={styles.emptyFeatureText}>Adjust search or filters to see more albums.</Text>
           </View>
         ) : (
-          displayedRecords.map((record: RecordItem) => (
+          displayedRecords.map((record: RecordItem) => {
+            const formatBadge = getRecordFormatBadge(record);
+            const hasYear = Boolean(record.year && record.year !== "Unknown");
+            const hasMeta = hasYear || Boolean(formatBadge);
+
+            return (
             <View key={record.id} style={styles.recordCard}>
               <Pressable
                 style={({ pressed }) => [styles.recordCardPressable, pressed ? styles.cardPressed : null]}
@@ -429,12 +460,12 @@ export function RecordListScreen({
                     <Text style={styles.artistName} numberOfLines={1}>
                       {record.artist}
                     </Text>
-                    <View style={styles.metaRow}>
-                      {record.year && record.year !== "Unknown" ? (
-                        <Text style={styles.yearText}>{record.year}</Text>
-                      ) : null}
-                      {record.genre ? <Text style={styles.genrePill}>{record.genre}</Text> : null}
-                    </View>
+                    {hasMeta ? (
+                      <View style={styles.metaRow}>
+                        {hasYear ? <Text style={styles.yearText}>{record.year}</Text> : null}
+                        {formatBadge ? <Text style={styles.genrePill}>{formatBadge}</Text> : null}
+                      </View>
+                    ) : null}
                     {!isWishlist && record.purchasedAt ? (
                       <Text style={styles.purchaseText} numberOfLines={1}>
                         Purchased at {record.purchasedAt}
@@ -495,7 +526,8 @@ export function RecordListScreen({
                 </View>
               ) : null}
             </View>
-          ))
+          );
+          })
         )}
       </ScrollView>
 
@@ -737,15 +769,25 @@ export function RecordListScreen({
                           debugUriSource="search-result"
                         />
                         <View style={styles.selectedInfoWrap}>
+                          {(() => {
+                            const hasYear = Boolean(selectedMetadata.year && selectedMetadata.year !== "Unknown");
+                            const hasGenre = Boolean(selectedMetadata.genre);
+                            const hasMeta = hasYear || Boolean(selectedMetadataFormatBadge) || hasGenre;
+
+                            return (
+                              <>
                           <Text style={styles.selectedTitle}>{selectedMetadata.album}</Text>
                           <Text style={styles.selectedArtist}>{selectedMetadata.artist}</Text>
-                          <View style={styles.metaRow}>
-                            {selectedMetadata.year && selectedMetadata.year !== "Unknown" ? (
-                              <Text style={styles.yearText}>{selectedMetadata.year}</Text>
-                            ) : null}
-                            {selectedMetadata.format ? <Text style={styles.searchFormatPill}>{selectedMetadata.format}</Text> : null}
-                            {selectedMetadata.genre ? <Text style={styles.genrePill}>{selectedMetadata.genre}</Text> : null}
-                          </View>
+                          {hasMeta ? (
+                            <View style={styles.metaRow}>
+                              {hasYear ? <Text style={styles.yearText}>{selectedMetadata.year}</Text> : null}
+                              {selectedMetadataFormatBadge ? <Text style={styles.searchFormatPill}>{selectedMetadataFormatBadge}</Text> : null}
+                              {hasGenre ? <Text style={styles.genrePill}>{selectedMetadata.genre}</Text> : null}
+                            </View>
+                          ) : null}
+                              </>
+                            );
+                          })()}
                         </View>
                       </View>
                     </View>

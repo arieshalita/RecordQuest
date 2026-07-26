@@ -896,7 +896,7 @@ export default function App() {
       artist: trimmedArtist,
       added_at: new Date().toISOString(),
       year: "Unknown",
-      genre: "Vinyl",
+      genre: "",
       cover: "",
       purchasedAt: purchasedAt.trim() || undefined,
       purchaseDate: "",

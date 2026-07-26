@@ -3,6 +3,7 @@ import { ScrollView, Text, View, Pressable, TextInput, StyleSheet } from "react-
 import { AlbumArt } from "../components/AlbumArt";
 import { TopBar } from "../components/TopBar";
 import type { RecordItem } from "../hooks/types";
+import { deriveRecordFormatBadge } from "../utils/record-format-badge";
 
 type AlbumDetailScreenProps = {
   selectedRecord: RecordItem;
@@ -61,6 +62,10 @@ export function AlbumDetailScreen({
 
   const addedDateLabel = formatAddedDate(selectedRecord.added_at);
   const showPurchaseDateField = isEditingRecord || hasValidPurchaseDate(selectedRecord.purchaseDate);
+  const formatBadge = deriveRecordFormatBadge({
+    title: selectedRecord.album,
+    legacyGenre: selectedRecord.genre,
+  });
 
   return (
     <ScrollView contentContainerStyle={styles.page}>
@@ -79,7 +84,7 @@ export function AlbumDetailScreen({
         <Text style={styles.detailTitle}>{selectedRecord.album}</Text>
         <Text style={styles.detailArtist}>{selectedRecord.artist}</Text>
         <View style={styles.metaRow}>
-          <Text style={styles.genrePill}>{selectedRecord.genre}</Text>
+          {formatBadge ? <Text style={styles.genrePill}>{formatBadge}</Text> : null}
           <Text style={styles.yearText}>{selectedRecord.year}</Text>
         </View>
 

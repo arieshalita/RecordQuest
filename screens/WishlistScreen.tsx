@@ -11,6 +11,22 @@ import {
 import { AlbumArt } from "../components/AlbumArt";
 import { TopBar } from "../components/TopBar";
 import type { RecordItem, AlbumSearchResult } from "../hooks/types";
+import { deriveRecordFormatBadge } from "../utils/record-format-badge";
+
+function getSearchResultFormatBadge(result: AlbumSearchResult): string | null {
+  return deriveRecordFormatBadge({
+    explicitFormat: result.format,
+    releasePrimaryType: result.format,
+    title: result.album,
+  });
+}
+
+function getRecordFormatBadge(record: RecordItem): string | null {
+  return deriveRecordFormatBadge({
+    title: record.album,
+    legacyGenre: record.genre,
+  });
+}
 
 type WishlistScreenProps = {
   records: RecordItem[];
@@ -49,6 +65,8 @@ export function WishlistScreen({
   onViewRecord,
   back,
 }: WishlistScreenProps) {
+  const selectedMetadataFormatBadge = selectedMetadata ? getSearchResultFormatBadge(selectedMetadata) : null;
+
   return (
     <ScrollView contentContainerStyle={styles.page}>
       <TopBar title="Wishlist" back={back} />
@@ -87,14 +105,17 @@ export function WishlistScreen({
             <Text style={styles.selectedTitle}>{selectedMetadata.album}</Text>
             <Text style={styles.selectedArtist}>{selectedMetadata.artist}</Text>
             <View style={styles.metaRow}>
-              <Text style={styles.genrePill}>{selectedMetadata.genre}</Text>
+              {selectedMetadataFormatBadge ? <Text style={styles.genrePill}>{selectedMetadataFormatBadge}</Text> : null}
               <Text style={styles.yearText}>{selectedMetadata.year}</Text>
             </View>
           </View>
         ) : null}
         {searchResults.length > 0 ? (
           <View style={styles.resultsList}>
-            {searchResults.map((result: AlbumSearchResult) => (
+            {searchResults.map((result: AlbumSearchResult) => {
+              const formatBadge = getSearchResultFormatBadge(result);
+
+              return (
               <Pressable
                 key={result.id}
                 style={styles.resultCard}
@@ -105,12 +126,13 @@ export function WishlistScreen({
                   <Text style={styles.resultTitle}>{result.album}</Text>
                   <Text style={styles.resultArtist}>{result.artist}</Text>
                   <View style={styles.metaRow}>
-                    <Text style={styles.genrePill}>{result.genre}</Text>
+                    {formatBadge ? <Text style={styles.genrePill}>{formatBadge}</Text> : null}
                     <Text style={styles.yearText}>{result.year}</Text>
                   </View>
                 </View>
               </Pressable>
-            ))}
+            );
+            })}
           </View>
         ) : null}
         <Pressable style={styles.addButton} onPress={onAdd}>
@@ -124,7 +146,10 @@ export function WishlistScreen({
           <Text style={styles.emptyFeatureText}>Add your first wishlist item above.</Text>
         </View>
       ) : (
-        records.map((record: RecordItem) => (
+        records.map((record: RecordItem) => {
+          const formatBadge = getRecordFormatBadge(record);
+
+          return (
           <View key={record.id} style={styles.recordCard}>
             <Pressable style={{ flex: 1 }} onPress={() => onViewRecord?.(record)}>
               <View style={styles.cardInfo}>
@@ -133,7 +158,7 @@ export function WishlistScreen({
                   <Text style={styles.albumTitle}>{record.album}</Text>
                   <Text style={styles.artistName}>{record.artist}</Text>
                   <View style={styles.metaRow}>
-                    <Text style={styles.genrePill}>{record.genre}</Text>
+                    {formatBadge ? <Text style={styles.genrePill}>{formatBadge}</Text> : null}
                     <Text style={styles.yearText}>{record.year}</Text>
                   </View>
                 </View>
@@ -148,7 +173,8 @@ export function WishlistScreen({
               </Pressable>
             </View>
           </View>
-        ))
+        );
+        })
       )}
     </ScrollView>
   );
