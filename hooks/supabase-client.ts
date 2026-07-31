@@ -29,6 +29,7 @@
 import {
   createClient,
   SupabaseClient,
+  type AuthChangeEvent,
   type Session,
   type User,
 } from "@supabase/supabase-js";
@@ -397,12 +398,12 @@ export async function getCurrentSession(): Promise<Session | null> {
  * @returns Unsubscribe function to stop listening
  */
 export function onAuthStateChange(
-  callback: (authenticated: boolean, user: User | null, session: Session | null) => void
+  callback: (event: AuthChangeEvent, authenticated: boolean, user: User | null, session: Session | null) => void
 ): () => void {
   const {
     data: { subscription },
-  } = supabase.auth.onAuthStateChange((_event, session) => {
-    callback(!!session, session?.user ?? null, session ?? null);
+  } = supabase.auth.onAuthStateChange((event, session) => {
+    callback(event, !!session, session?.user ?? null, session ?? null);
   });
 
   return () => {

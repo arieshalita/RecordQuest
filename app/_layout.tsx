@@ -5,7 +5,12 @@ import * as Notifications from "expo-notifications";
 import { AuthProvider, useAuth } from "../providers/AuthProvider";
 import { registerForPushNotificationsAsync } from "../hooks/push-notifications";
 import { upsertUserPushToken } from "../hooks/recordquest-supabase-service";
-import { getProfileRedirectTarget, isRecoveryAuthRoute } from "../utils/auth-route-guard";
+import {
+  getAuthRouteCategory,
+  getProfileRedirectTarget,
+  isRecoveryAuthRoute,
+  shouldSuppressAuthenticatedRedirect,
+} from "../utils/auth-route-guard";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -25,13 +30,35 @@ export default function RootLayout() {
 }
 
 function RootNavigator() {
-  const { user, isLoading, profileSetupStatus, profileSetupError, retryProfileSetup, signOut } = useAuth();
+  const {
+    user,
+    recoveryActive,
+    isLoading,
+    profileSetupStatus,
+    profileSetupError,
+    retryProfileSetup,
+    signOut,
+  } = useAuth();
   const pathname = usePathname();
   const pushRegistrationUserIdRef = useRef<string | null>(null);
   const pushRegistrationInFlightUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!user?.id) {
+      return;
+    }
+
+    if (shouldSuppressAuthenticatedRedirect({ pathname, recoveryActive })) {
+      if (__DEV__) {
+        console.log("[RecordQuest][root-layout] normal authenticated redirect suppressed", {
+          recoveryActive,
+          currentRouteCategory: getAuthRouteCategory(pathname),
+          chosenNavigationTarget: "/auth/reset-password",
+          normalRedirectSuppressed: true,
+        });
+      }
+
+      router.replace("/auth/reset-password");
       return;
     }
 
@@ -49,16 +76,18 @@ function RootNavigator() {
       if (__DEV__) {
         console.log("[RecordQuest][root-layout] profile redirect suppressed for recovery route", {
           pathname,
+          recoveryActive,
           attemptedTarget: redirectTarget,
           profileSetupStatus,
           didAttemptOverrideCallback: pathname === "/auth/callback",
+          currentRouteCategory: getAuthRouteCategory(pathname),
         });
       }
       return;
     }
 
     router.replace(redirectTarget);
-  }, [pathname, profileSetupStatus, user?.id]);
+  }, [pathname, profileSetupStatus, recoveryActive, user?.id]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -144,11 +173,11 @@ function RootNavigator() {
       <Stack.Screen name="auth/callback" />
       <Stack.Screen name="auth/reset-password" />
 
-      <Stack.Protected guard={!!user && profileSetupStatus === "ready"}>
+      <Stack.Protected guard={!!user && profileSetupStatus === "ready" && !recoveryActive}>
         <Stack.Screen name="(tabs)" />
       </Stack.Protected>
 
-      <Stack.Protected guard={!!user && profileSetupStatus === "username-required"}>
+      <Stack.Protected guard={!!user && profileSetupStatus === "username-required" && !recoveryActive}>
         <Stack.Screen name="choose-username" />
       </Stack.Protected>
 

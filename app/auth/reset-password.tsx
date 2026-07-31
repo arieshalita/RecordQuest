@@ -2,10 +2,13 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { AuthScreenShell } from "../../components/auth/AuthScreenShell";
+import { useAuth } from "../../providers/AuthProvider";
 import { supabase } from "../../hooks/supabase-client";
 import { mapRecoveryUpdateError, validateRecoveryPassword } from "../../utils/auth-recovery";
+import { resolveRecoveryCompletion } from "../../utils/auth-recovery-flow";
 
 export default function ResetPasswordScreen() {
+  const { clearRecoveryFlow } = useAuth();
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
@@ -25,6 +28,7 @@ export default function ResetPasswordScreen() {
       }
 
       if (sessionError || !data.session?.user) {
+        clearRecoveryFlow();
         setHasValidSession(false);
         setError("This password reset link is invalid or has expired. Request a new one.");
         setIsCheckingSession(false);
@@ -80,12 +84,15 @@ export default function ResetPasswordScreen() {
         return;
       }
 
+      const completion = resolveRecoveryCompletion();
+      clearRecoveryFlow();
+
       setMessage("Your password has been updated. You can now sign in with your new password.");
 
       await supabase.auth.signOut({ scope: "local" });
 
       setTimeout(() => {
-        router.replace("/(auth)/sign-in?reset=success");
+        router.replace(completion.nextHref);
       }, 900);
     } catch (unexpectedError) {
       if (__DEV__) {

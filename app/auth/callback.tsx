@@ -4,6 +4,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import * as Linking from "expo-linking";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { supabase } from "../../hooks/supabase-client";
+import { useAuth } from "../../providers/AuthProvider";
 import { detectCallbackAuthMethod, mapRecoveryCallbackError } from "../../utils/auth-recovery";
 import {
   parseAuthCallbackUrl,
@@ -115,6 +116,7 @@ function logCallback(message: string, details?: Record<string, unknown>): void {
 }
 
 export default function AuthCallbackScreen() {
+  const { beginRecoveryFlow, clearRecoveryFlow } = useAuth();
   const params = useLocalSearchParams();
   const liveUrl = Linking.useURL();
   const hasStartedRef = useRef(false);
@@ -232,8 +234,16 @@ export default function AuthCallbackScreen() {
           callbackAuthMethod,
         });
 
+        if (authType === "recovery") {
+          beginRecoveryFlow();
+        }
+
         if (!hasAuthPayload(queryParams, hashParams)) {
           consumedCallbackKeys.add(callbackKey);
+
+          if (authType === "recovery") {
+            clearRecoveryFlow();
+          }
 
           const {
             data: { session: existingSession },
@@ -246,6 +256,9 @@ export default function AuthCallbackScreen() {
 
         if (queryError) {
           consumedCallbackKeys.add(callbackKey);
+          if (authType === "recovery") {
+            clearRecoveryFlow();
+          }
 
           if (!isMounted) return;
           setState({
@@ -267,6 +280,9 @@ export default function AuthCallbackScreen() {
 
           if (exchangeError) {
             consumedCallbackKeys.add(callbackKey);
+            if (authType === "recovery") {
+              clearRecoveryFlow();
+            }
 
             logCallback("session establishment failed", {
               callbackAuthMethod,
@@ -299,6 +315,9 @@ export default function AuthCallbackScreen() {
 
           if (setSessionError) {
             consumedCallbackKeys.add(callbackKey);
+            if (authType === "recovery") {
+              clearRecoveryFlow();
+            }
 
             logCallback("session establishment failed", {
               callbackAuthMethod,
@@ -331,6 +350,9 @@ export default function AuthCallbackScreen() {
 
           if (verifyError) {
             consumedCallbackKeys.add(callbackKey);
+            if (authType === "recovery") {
+              clearRecoveryFlow();
+            }
 
             logCallback("session establishment failed", {
               callbackAuthMethod,
@@ -357,6 +379,10 @@ export default function AuthCallbackScreen() {
           });
         } else {
           consumedCallbackKeys.add(callbackKey);
+
+          if (authType === "recovery") {
+            clearRecoveryFlow();
+          }
 
           if (!isMounted) return;
           setState({
