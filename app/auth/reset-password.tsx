@@ -2,13 +2,10 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { AuthScreenShell } from "../../components/auth/AuthScreenShell";
-import { useAuth } from "../../providers/AuthProvider";
 import { supabase } from "../../hooks/supabase-client";
-import { mapRecoveryUpdateError, validateRecoveryPassword } from "../../utils/auth-recovery";
-import { resolveRecoveryCompletion } from "../../utils/auth-recovery-flow";
+import { submitRecoveryPasswordUpdate } from "../../utils/auth-recovery-flow";
 
 export default function ResetPasswordScreen() {
-  const { clearRecoveryFlow } = useAuth();
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
@@ -28,7 +25,6 @@ export default function ResetPasswordScreen() {
       }
 
       if (sessionError || !data.session?.user) {
-        clearRecoveryFlow();
         setHasValidSession(false);
         setError("This password reset link is invalid or has expired. Request a new one.");
         setIsCheckingSession(false);
@@ -54,50 +50,41 @@ export default function ResetPasswordScreen() {
 
     setError("");
     setMessage("");
-
-    const validation = validateRecoveryPassword(password, confirmPassword);
-    if (!validation.valid) {
-      setError(validation.error ?? "Enter and confirm your new password.");
-      return;
-    }
-
     setIsSubmitting(true);
 
     try {
-      const { data, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError || !data.session?.user) {
-        setError("This password reset link is invalid or has expired. Request a new one.");
-        return;
-      }
-
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: validation.normalizedPassword,
+      const result = await submitRecoveryPasswordUpdate(password, confirmPassword, {
+        getSession: () => supabase.auth.getSession(),
+        updateUser: (nextPassword) => supabase.auth.updateUser({ password: nextPassword }),
+        signOutLocal: () => supabase.auth.signOut({ scope: "local" }),
       });
 
-      if (updateError) {
+      if (!result.success) {
         if (__DEV__) {
-          console.warn("[RecordQuest][auth-recovery] update password failed", {
-            message: updateError.message,
+          console.log("[RecordQuest][auth-recovery] password update failure", {
+            passwordUpdateSucceeded: false,
+            localSignOutSucceeded: false,
           });
         }
-        setError(mapRecoveryUpdateError(updateError.message));
+
+        setError(result.error ?? "We couldn't update your password right now. Please try again.");
         return;
       }
 
-      const completion = resolveRecoveryCompletion();
-      clearRecoveryFlow();
+      if (__DEV__) {
+        console.log("[RecordQuest][auth-recovery] password update success", {
+          passwordUpdateSucceeded: true,
+          localSignOutSucceeded: true,
+        });
+      }
 
-      setMessage("Your password has been updated. You can now sign in with your new password.");
-
-      await supabase.auth.signOut({ scope: "local" });
-
-      setTimeout(() => {
-        router.replace(completion.nextHref);
-      }, 900);
+      setMessage(result.message ?? "Password updated. Sign in with your new password.");
+      router.replace(result.nextHref ?? "/(auth)/sign-in?reset=success");
     } catch (unexpectedError) {
       if (__DEV__) {
-        console.warn("[RecordQuest][auth-recovery] unexpected update password error", {
-          message: unexpectedError instanceof Error ? unexpectedError.message : "unknown error",
+        console.log("[RecordQuest][auth-recovery] password update failure", {
+          passwordUpdateSucceeded: false,
+          localSignOutSucceeded: false,
         });
       }
       setError("We couldn't update your password right now. Please try again.");

@@ -22,13 +22,6 @@ export function getAuthRouteCategory(pathname: string): "recovery" | "auth" | "t
   return "other";
 }
 
-export function shouldSuppressAuthenticatedRedirect(input: {
-  pathname: string;
-  recoveryActive: boolean;
-}): boolean {
-  return input.recoveryActive && input.pathname !== "/auth/reset-password" && input.pathname !== "/auth/callback";
-}
-
 export function getProfileRedirectTarget(input: {
   pathname: string;
   profileSetupStatus: "loading" | "ready" | "username-required" | "temporary-error";

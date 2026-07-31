@@ -1,7 +1,6 @@
 import {
   getProfileRedirectTarget,
   isRecoveryAuthRoute,
-  shouldSuppressAuthenticatedRedirect,
 } from "./auth-route-guard";
 
 function assert(condition: boolean, message: string): void {
@@ -27,12 +26,12 @@ function testProfileRedirectWouldExistForCallbackWhenUsernameRequired(): void {
 
 function testRecoveryRedirectSuppressedOnAppRoutes(): void {
   assert(
-    shouldSuppressAuthenticatedRedirect({ pathname: "/(tabs)", recoveryActive: true }),
-    "Expected recovery to suppress authenticated redirects on app routes"
+    getProfileRedirectTarget({ pathname: "/auth/reset-password", profileSetupStatus: "ready", hasUserId: true }) === null,
+    "Expected reset-password route to remain accessible and not redirect to tabs"
   );
   assert(
-    !shouldSuppressAuthenticatedRedirect({ pathname: "/auth/reset-password", recoveryActive: true }),
-    "Expected reset-password route to remain accessible during recovery"
+    getProfileRedirectTarget({ pathname: "/(tabs)", profileSetupStatus: "ready", hasUserId: true }) === null,
+    "Expected the normal signed-in app route to remain unchanged"
   );
 }
 

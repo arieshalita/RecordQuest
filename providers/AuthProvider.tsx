@@ -3,7 +3,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type PropsWithChildren,
 } from "react";
@@ -35,7 +34,6 @@ export type ProfileSetupStatus = "loading" | "ready" | "username-required" | "te
 interface AuthContextValue {
   user: User | null;
   session: Session | null;
-  recoveryActive: boolean;
   isLoading: boolean;
   profileSetupStatus: ProfileSetupStatus;
   profileSetupError: string | null;
@@ -46,8 +44,6 @@ interface AuthContextValue {
   deleteAccount: () => Promise<AuthResponse>;
   retryProfileSetup: () => Promise<void>;
   completeUsername: (username: string) => Promise<{ success: boolean; error?: string }>;
-  beginRecoveryFlow: () => void;
-  clearRecoveryFlow: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -87,41 +83,18 @@ async function resetStaySignedInPreference(): Promise<void> {
 export function AuthProvider({ children }: PropsWithChildren) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
-  const [recoveryActive, setRecoveryActive] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [profileSetupStatus, setProfileSetupStatus] = useState<ProfileSetupStatus>("loading");
   const [profileSetupError, setProfileSetupError] = useState<string | null>(null);
-  const recoveryActiveRef = useRef(false);
-
-  function setRecoveryFlowState(nextRecoveryActive: boolean): void {
-    recoveryActiveRef.current = nextRecoveryActive;
-    setRecoveryActive(nextRecoveryActive);
-  }
-
-  function beginRecoveryFlow(): void {
-    setRecoveryFlowState(true);
-  }
-
-  function clearRecoveryFlow(): void {
-    setRecoveryFlowState(false);
-  }
 
   function applySignedOutState(): void {
     setUser(null);
     setSession(null);
-    setRecoveryFlowState(false);
     setProfileSetupStatus("ready");
     setProfileSetupError(null);
   }
 
   async function resolveProfileBootstrapGate(): Promise<AuthFlowResult> {
-    if (recoveryActiveRef.current) {
-      return {
-        success: true,
-        usernameSetupRequired: false,
-      };
-    }
-
     const profileBootstrap = await ensureOwnProfileFromAuthMetadata();
 
     if (profileBootstrap.success && profileBootstrap.status === "ready") {
@@ -208,15 +181,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
         return;
       }
 
-      if (recoveryActiveRef.current) {
-        setSession(activeSession);
-        setUser(activeSession.user);
-        setProfileSetupStatus("ready");
-        setProfileSetupError(null);
-        setIsLoading(false);
-        return;
-      }
-
       setSession(activeSession);
       setUser(activeSession.user);
       setProfileSetupStatus("loading");
@@ -243,36 +207,16 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     restoreSession();
 
-    const unsubscribe = onAuthStateChange((event, authenticated, authUser, authSession) => {
-      if (event === "SIGNED_OUT") {
+    const unsubscribe = onAuthStateChange((_event, authenticated, authUser, authSession) => {
+      if (!authenticated) {
         applySignedOutState();
         return;
       }
 
-      const isRecoveryEvent = event === "PASSWORD_RECOVERY" || recoveryActiveRef.current;
-
-      if (event === "PASSWORD_RECOVERY") {
-        setRecoveryFlowState(true);
-      }
-
       setUser(authUser);
       setSession(authSession);
-      setProfileSetupStatus(isRecoveryEvent ? "ready" : "loading");
+      setProfileSetupStatus("loading");
       setProfileSetupError(null);
-
-      if (isRecoveryEvent) {
-        if (__DEV__) {
-          console.log("[RecordQuest][auth] auth event handled", {
-            authEvent: event,
-            recoveryActive: true,
-            routeCategory: "recovery",
-            chosenNavigationTarget: "/auth/reset-password",
-            normalRedirectSuppressed: true,
-          });
-        }
-
-        return;
-      }
 
       void (async () => {
         const bootstrapGate = await resolveProfileBootstrapGate();
@@ -304,12 +248,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
     () => ({
       user,
       session,
-      recoveryActive,
       isLoading,
       profileSetupStatus,
       profileSetupError,
-      beginRecoveryFlow,
-      clearRecoveryFlow,
       signIn: async (email: string, password: string, staySignedIn: boolean) => {
         const result = await signInWithEmail(email, password);
         let usernameSetupRequired = false;
@@ -319,7 +260,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
         }
 
         if (result.success && result.session) {
-          clearRecoveryFlow();
           setSession(result.session);
           setUser(result.session.user);
           setProfileSetupStatus("loading");
@@ -364,7 +304,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
         }
 
         if (result.success && result.session) {
-          clearRecoveryFlow();
           setSession(result.session);
           setUser(result.session.user);
           setProfileSetupStatus("loading");
@@ -489,7 +428,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         };
       },
     }),
-    [beginRecoveryFlow, clearRecoveryFlow, isLoading, profileSetupError, profileSetupStatus, recoveryActive, session, user]
+    [isLoading, profileSetupError, profileSetupStatus, session, user]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

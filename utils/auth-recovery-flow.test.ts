@@ -1,4 +1,4 @@
-import { evaluateRecoveryAuthTransition, resolveRecoveryCompletion } from "./auth-recovery-flow";
+import { establishRecoverySessionFromUrl, submitRecoveryPasswordUpdate } from "./auth-recovery-flow";
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
@@ -6,81 +6,165 @@ function assert(condition: boolean, message: string): void {
   }
 }
 
-function testPasswordRecoveryActivates(): void {
-  const transition = evaluateRecoveryAuthTransition({
-    event: "PASSWORD_RECOVERY",
-    recoveryActive: false,
-    hasSession: true,
+async function testColdStartImplicitRecoveryUrl(): Promise<void> {
+  const result = await establishRecoverySessionFromUrl(
+    "recordquest://auth/callback#access_token=sessionA&refresh_token=sessionB&type=recovery",
+    {
+      exchangeCodeForSession: async () => ({ error: null }),
+      setSession: async () => ({ error: null }),
+      verifyOtp: async () => ({ error: null }),
+      getSession: async () => ({ data: { session: { user: { id: "user-1" } } as never }, error: null }),
+    }
+  );
+
+  assert(result.success, "Expected implicit recovery URL to establish a session");
+  assert(result.navigationTarget === "/auth/reset-password", `Expected reset route, got: ${result.navigationTarget}`);
+}
+
+async function testAlreadyRunningAppEventUrl(): Promise<void> {
+  const result = await establishRecoverySessionFromUrl(
+    "recordquest://auth/callback?code=abc123&type=recovery",
+    {
+      exchangeCodeForSession: async () => ({ error: null }),
+      setSession: async () => ({ error: null }),
+      verifyOtp: async () => ({ error: null }),
+      getSession: async () => ({ data: { session: { user: { id: "user-1" } } as never }, error: null }),
+    }
+  );
+
+  assert(result.success, "Expected event URL to establish a session");
+  assert(result.method === "exchangeCode", `Expected PKCE method, got: ${result.method}`);
+}
+
+async function testPkceRecoveryEstablishesSession(): Promise<void> {
+  const result = await establishRecoverySessionFromUrl("recordquest://auth/callback?code=pkce-code&type=recovery", {
+    exchangeCodeForSession: async (code) => ({ error: code === "pkce-code" ? null : { message: "unexpected" } }),
+    setSession: async () => ({ error: null }),
+    verifyOtp: async () => ({ error: null }),
+    getSession: async () => ({ data: { session: { user: { id: "user-1" } } as never }, error: null }),
   });
 
-  assert(transition.recoveryActive, "Expected PASSWORD_RECOVERY to activate recovery");
-  assert(transition.navigationTarget === "/auth/reset-password", `Expected reset route, got: ${transition.navigationTarget}`);
-  assert(transition.suppressNormalRedirect, "Expected recovery to suppress normal redirects");
+  assert(result.success, "Expected PKCE recovery to establish a session");
+  assert(result.method === "exchangeCode", `Expected exchangeCode method, got: ${result.method}`);
 }
 
-function testSignedInDuringActiveRecoveryStaysInRecovery(): void {
-  const transition = evaluateRecoveryAuthTransition({
-    event: "SIGNED_IN",
-    recoveryActive: true,
-    hasSession: true,
+async function testImplicitRecoveryEstablishesSession(): Promise<void> {
+  const result = await establishRecoverySessionFromUrl(
+    "recordquest://auth/callback#access_token=sessionA&refresh_token=sessionB&type=recovery",
+    {
+      exchangeCodeForSession: async () => ({ error: null }),
+      setSession: async (input) => ({ error: input.access_token && input.refresh_token ? null : { message: "missing tokens" } }),
+      verifyOtp: async () => ({ error: null }),
+      getSession: async () => ({ data: { session: { user: { id: "user-1" } } as never }, error: null }),
+    }
+  );
+
+  assert(result.success, "Expected implicit recovery tokens to establish a session");
+  assert(result.method === "setSession", `Expected setSession method, got: ${result.method}`);
+}
+
+async function testInvalidRecoveryUrlShowsError(): Promise<void> {
+  const result = await establishRecoverySessionFromUrl("recordquest://auth/callback?type=recovery", {
+    exchangeCodeForSession: async () => ({ error: null }),
+    setSession: async () => ({ error: null }),
+    verifyOtp: async () => ({ error: null }),
+    getSession: async () => ({ data: { session: null }, error: null }),
   });
 
-  assert(transition.recoveryActive, "Expected active recovery to stay active on SIGNED_IN");
-  assert(transition.navigationTarget === "/auth/reset-password", `Expected reset route, got: ${transition.navigationTarget}`);
-  assert(transition.suppressNormalRedirect, "Expected SIGNED_IN during recovery to suppress normal redirects");
+  assert(!result.success, "Expected invalid recovery URL to fail");
+  assert(result.method === "invalid", `Expected invalid method, got: ${result.method}`);
 }
 
-function testInitialSessionDuringActiveRecoveryStaysInRecovery(): void {
-  const transition = evaluateRecoveryAuthTransition({
-    event: "INITIAL_SESSION",
-    recoveryActive: true,
-    hasSession: true,
+async function testSuccessReturnsResetPasswordRoute(): Promise<void> {
+  const result = await establishRecoverySessionFromUrl("recordquest://auth/callback?code=pkce-code&type=recovery", {
+    exchangeCodeForSession: async () => ({ error: null }),
+    setSession: async () => ({ error: null }),
+    verifyOtp: async () => ({ error: null }),
+    getSession: async () => ({ data: { session: { user: { id: "user-1" } } as never }, error: null }),
   });
 
-  assert(transition.recoveryActive, "Expected active recovery to stay active on INITIAL_SESSION");
-  assert(transition.navigationTarget === "/auth/reset-password", `Expected reset route, got: ${transition.navigationTarget}`);
-  assert(transition.suppressNormalRedirect, "Expected INITIAL_SESSION during recovery to suppress normal redirects");
+  assert(result.navigationTarget === "/auth/reset-password", `Expected reset route, got: ${result.navigationTarget}`);
 }
 
-function testNormalSignInUnchanged(): void {
-  const transition = evaluateRecoveryAuthTransition({
-    event: "SIGNED_IN",
-    recoveryActive: false,
-    hasSession: true,
-  });
+async function testPasswordMismatchBlocksSubmission(): Promise<void> {
+  const result = await submitRecoveryPasswordUpdate(
+    "validPass123",
+    "differentPass123",
+    {
+      getSession: async () => ({ data: { session: { user: { id: "user-1" } } as never }, error: null }),
+      updateUser: async () => ({ error: null }),
+      signOutLocal: async () => ({ error: null }),
+    }
+  );
 
-  assert(!transition.recoveryActive, "Expected normal sign-in to keep recovery inactive");
-  assert(transition.navigationTarget === "/(tabs)", `Expected app route, got: ${transition.navigationTarget}`);
-  assert(!transition.suppressNormalRedirect, "Expected normal sign-in to allow standard redirecting");
+  assert(!result.success, "Expected mismatched passwords to fail");
+  assert(result.error === "Passwords do not match.", `Expected mismatch error, got: ${result.error}`);
 }
 
-function testSignedOutClearsRecovery(): void {
-  const transition = evaluateRecoveryAuthTransition({
-    event: "SIGNED_OUT",
-    recoveryActive: true,
-    hasSession: false,
-  });
+async function testValidPasswordsCallUpdateUser(): Promise<void> {
+  let updateCalls = 0;
+  const result = await submitRecoveryPasswordUpdate(
+    "validPass123",
+    "validPass123",
+    {
+      getSession: async () => ({ data: { session: { user: { id: "user-1" } } as never }, error: null }),
+      updateUser: async () => {
+        updateCalls += 1;
+        return { error: null };
+      },
+      signOutLocal: async () => ({ error: null }),
+    }
+  );
 
-  assert(!transition.recoveryActive, "Expected SIGNED_OUT to clear recovery state");
-  assert(transition.navigationTarget === "/(auth)/sign-in", `Expected sign-in route, got: ${transition.navigationTarget}`);
-  assert(!transition.suppressNormalRedirect, "Expected SIGNED_OUT not to suppress normal redirects");
+  assert(result.success, "Expected valid passwords to proceed");
+  assert(updateCalls === 1, "Expected updateUser to be called once");
 }
 
-function testPasswordUpdateCompletionClearsRecovery(): void {
-  const completion = resolveRecoveryCompletion();
+async function testSuccessfulUpdateSignsOutLocally(): Promise<void> {
+  let signOutCalls = 0;
+  const result = await submitRecoveryPasswordUpdate(
+    "validPass123",
+    "validPass123",
+    {
+      getSession: async () => ({ data: { session: { user: { id: "user-1" } } as never }, error: null }),
+      updateUser: async () => ({ error: null }),
+      signOutLocal: async () => {
+        signOutCalls += 1;
+        return { error: null };
+      },
+    }
+  );
 
-  assert(completion.clearRecoveryState, "Expected successful password update to clear recovery state");
-  assert(completion.nextHref === "/(auth)/sign-in?reset=success", `Expected sign-in completion route, got: ${completion.nextHref}`);
+  assert(result.success, "Expected successful update to pass");
+  assert(signOutCalls === 1, "Expected local sign-out to be called once");
 }
 
-function run(): void {
-  testPasswordRecoveryActivates();
-  testSignedInDuringActiveRecoveryStaysInRecovery();
-  testInitialSessionDuringActiveRecoveryStaysInRecovery();
-  testNormalSignInUnchanged();
-  testSignedOutClearsRecovery();
-  testPasswordUpdateCompletionClearsRecovery();
+async function testSuccessfulUpdateReturnsToSignIn(): Promise<void> {
+  const result = await submitRecoveryPasswordUpdate(
+    "validPass123",
+    "validPass123",
+    {
+      getSession: async () => ({ data: { session: { user: { id: "user-1" } } as never }, error: null }),
+      updateUser: async () => ({ error: null }),
+      signOutLocal: async () => ({ error: null }),
+    }
+  );
+
+  assert(result.nextHref === "/(auth)/sign-in?reset=success", `Expected sign-in route, got: ${result.nextHref}`);
+}
+
+async function run(): Promise<void> {
+  await testColdStartImplicitRecoveryUrl();
+  await testAlreadyRunningAppEventUrl();
+  await testPkceRecoveryEstablishesSession();
+  await testImplicitRecoveryEstablishesSession();
+  await testInvalidRecoveryUrlShowsError();
+  await testSuccessReturnsResetPasswordRoute();
+  await testPasswordMismatchBlocksSubmission();
+  await testValidPasswordsCallUpdateUser();
+  await testSuccessfulUpdateSignsOutLocally();
+  await testSuccessfulUpdateReturnsToSignIn();
   console.log("auth-recovery-flow tests passed");
 }
 
-run();
+void run();
