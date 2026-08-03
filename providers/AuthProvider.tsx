@@ -207,7 +207,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     restoreSession();
 
-    const unsubscribe = onAuthStateChange((_event, authenticated, authUser, authSession) => {
+    const unsubscribe = onAuthStateChange((authenticated, authUser, authSession) => {
       if (!authenticated) {
         applySignedOutState();
         return;

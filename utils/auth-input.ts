@@ -60,20 +60,6 @@ export function mapSignUpErrorMessage(error: string | null | undefined): string 
   return "Could not create your account right now. Please try again.";
 }
 
-export function mapPasswordResetErrorMessage(error: string | null | undefined): string {
-  const source = (error ?? "").toLowerCase();
-
-  if (source.includes("429") || source.includes("rate limit") || source.includes("over_email_send_rate_limit") || source.includes("too many")) {
-    return "Too many reset emails were requested. Please wait and try again later.";
-  }
-
-  if (source.includes("network") || source.includes("failed to fetch") || source.includes("fetch")) {
-    return "Network error. Check your connection and try again.";
-  }
-
-  if (source.includes("invalid email") || source.includes("invalid recipient") || source.includes("email address")) {
-    return "Enter a valid email address.";
-  }
-
+export function mapPasswordResetErrorMessage(_error: string | null | undefined): string {
   return "Could not send reset email right now. Please try again.";
 }

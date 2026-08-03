@@ -29,12 +29,11 @@
 import {
   createClient,
   SupabaseClient,
-  type AuthChangeEvent,
   type Session,
   type User,
 } from "@supabase/supabase-js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { buildAuthRedirectUrl } from "../utils/auth-redirect-url";
+import * as Linking from "expo-linking";
 
 // Read environment variables with Expo public prefix
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -84,7 +83,7 @@ type DeleteAccountFunctionResponse = {
 };
 
 export function getAuthRedirectUrl(path = "auth/callback"): string {
-  return buildAuthRedirectUrl(path, "recordquest");
+  return Linking.createURL(path, { scheme: "recordquest" });
 }
 
 function logAuthError(operation: string, error: unknown): void {
@@ -398,12 +397,12 @@ export async function getCurrentSession(): Promise<Session | null> {
  * @returns Unsubscribe function to stop listening
  */
 export function onAuthStateChange(
-  callback: (event: AuthChangeEvent, authenticated: boolean, user: User | null, session: Session | null) => void
+  callback: (authenticated: boolean, user: User | null, session: Session | null) => void
 ): () => void {
   const {
     data: { subscription },
-  } = supabase.auth.onAuthStateChange((event, session) => {
-    callback(event, !!session, session?.user ?? null, session ?? null);
+  } = supabase.auth.onAuthStateChange((_event, session) => {
+    callback(!!session, session?.user ?? null, session ?? null);
   });
 
   return () => {

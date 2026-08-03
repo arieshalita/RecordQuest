@@ -5,7 +5,6 @@ import * as Notifications from "expo-notifications";
 import { AuthProvider, useAuth } from "../providers/AuthProvider";
 import { registerForPushNotificationsAsync } from "../hooks/push-notifications";
 import { upsertUserPushToken } from "../hooks/recordquest-supabase-service";
-import { getProfileRedirectTarget, isRecoveryAuthRoute } from "../utils/auth-route-guard";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -25,52 +24,24 @@ export default function RootLayout() {
 }
 
 function RootNavigator() {
-  const {
-    user,
-    isLoading,
-    profileSetupStatus,
-    profileSetupError,
-    retryProfileSetup,
-    signOut,
-  } = useAuth();
+  const { user, isLoading, profileSetupStatus, profileSetupError, retryProfileSetup, signOut } = useAuth();
   const pathname = usePathname();
   const pushRegistrationUserIdRef = useRef<string | null>(null);
   const pushRegistrationInFlightUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (isRecoveryAuthRoute(pathname)) {
-      if (__DEV__) {
-        console.log("[RecordQuest][root-layout] root redirect suppressed", {
-          currentRootPathname: pathname,
-          rootRedirectSuppressed: true,
-        });
-      }
-
-      return;
-    }
-
     if (!user?.id) {
       return;
     }
 
-    if (__DEV__) {
-      console.log("[RecordQuest][root-layout] root route check", {
-        currentRootPathname: pathname,
-        rootRedirectSuppressed: false,
-      });
-    }
-
-    const redirectTarget = getProfileRedirectTarget({
-      pathname,
-      profileSetupStatus,
-      hasUserId: Boolean(user?.id),
-    });
-
-    if (!redirectTarget) {
+    if (profileSetupStatus === "username-required" && pathname !== "/choose-username") {
+      router.replace("/choose-username");
       return;
     }
 
-    router.replace(redirectTarget);
+    if (profileSetupStatus === "ready" && pathname === "/choose-username") {
+      router.replace("/(tabs)");
+    }
   }, [pathname, profileSetupStatus, user?.id]);
 
   useEffect(() => {
@@ -155,7 +126,6 @@ function RootNavigator() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="auth/callback" />
-      <Stack.Screen name="auth/reset-password" />
 
       <Stack.Protected guard={!!user && profileSetupStatus === "ready"}>
         <Stack.Screen name="(tabs)" />

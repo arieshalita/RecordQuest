@@ -1,17 +1,94 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { router, usePathname } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import * as Linking from "expo-linking";
+import type { EmailOtpType } from "@supabase/supabase-js";
 import { supabase } from "../../hooks/supabase-client";
-import { establishRecoverySessionFromUrl } from "../../utils/auth-recovery-flow";
-import { parseAuthCallbackUrl } from "../../utils/auth-callback-url";
 
 type CallbackState = {
   status: "loading" | "success" | "error";
   title: string;
   message: string;
-  nextHref: "/(auth)/sign-in" | "/auth/reset-password";
+  nextHref: "/(auth)/sign-in" | "/(tabs)";
 };
+
+const OTP_TYPES: EmailOtpType[] = ["signup", "invite", "recovery", "email", "email_change"];
+
+const consumedCallbackKeys = new Set<string>();
+let initialUrlPromise: Promise<string | null> | null = null;
+
+function getInitialUrlOnce(): Promise<string | null> {
+  if (!initialUrlPromise) {
+    initialUrlPromise = Linking.getInitialURL().catch(() => null);
+  }
+
+  return initialUrlPromise;
+}
+
+function parseParams(raw: string): URLSearchParams {
+  return new URLSearchParams(raw.startsWith("?") || raw.startsWith("#") ? raw.slice(1) : raw);
+}
+
+function mapCallbackErrorMessage(error: string | null | undefined): string {
+  const source = (error ?? "").toLowerCase();
+
+  if (source.includes("expired")) {
+    return "This link has expired. Request a new one and try again.";
+  }
+
+  if (source.includes("invalid") || source.includes("already")) {
+    return "This link is invalid or already used. Request a new link and try again.";
+  }
+
+  if (source.includes("network") || source.includes("fetch")) {
+    return "Network error. Check your connection and try again.";
+  }
+
+  return "We couldn't complete verification with this link. Please request a new email and try again.";
+}
+
+function mapType(rawType: string | null): EmailOtpType | null {
+  if (!rawType) {
+    return null;
+  }
+
+  const normalized = rawType.trim().toLowerCase();
+  if (OTP_TYPES.includes(normalized as EmailOtpType)) {
+    return normalized as EmailOtpType;
+  }
+
+  return null;
+}
+
+function buildCallbackKey(url: string, queryParams: URLSearchParams, hashParams: URLSearchParams): string {
+  const tokenHash = queryParams.get("token_hash") ?? hashParams.get("token_hash") ?? "";
+  const accessToken = hashParams.get("access_token") ?? queryParams.get("access_token") ?? "";
+  const refreshToken = hashParams.get("refresh_token") ?? queryParams.get("refresh_token") ?? "";
+  const type = queryParams.get("type") ?? hashParams.get("type") ?? "";
+
+  if (tokenHash) {
+    return `token_hash:${type}:${tokenHash}`;
+  }
+
+  if (accessToken || refreshToken) {
+    return `session_tokens:${type}:${accessToken.length}:${refreshToken.length}`;
+  }
+
+  return `url:${url}`;
+}
+
+function hasAuthPayload(queryParams: URLSearchParams, hashParams: URLSearchParams): boolean {
+  return Boolean(
+    queryParams.get("token_hash") ||
+      hashParams.get("token_hash") ||
+      hashParams.get("access_token") ||
+      queryParams.get("access_token") ||
+      hashParams.get("refresh_token") ||
+      queryParams.get("refresh_token") ||
+      queryParams.get("error") ||
+      queryParams.get("error_description")
+  );
+}
 
 function logCallback(message: string, details?: Record<string, unknown>): void {
   if (!__DEV__) {
@@ -27,7 +104,8 @@ function logCallback(message: string, details?: Record<string, unknown>): void {
 }
 
 export default function AuthCallbackScreen() {
-  const pathname = usePathname();
+  const params = useLocalSearchParams();
+  const liveUrl = Linking.useURL();
   const hasStartedRef = useRef(false);
   const [state, setState] = useState<CallbackState>({
     status: "loading",
@@ -36,6 +114,18 @@ export default function AuthCallbackScreen() {
     nextHref: "/(auth)/sign-in",
   });
 
+  const fallbackQuery = useMemo(() => {
+    const query = new URLSearchParams();
+
+    for (const [key, value] of Object.entries(params)) {
+      if (typeof value === "string") {
+        query.set(key, value);
+      }
+    }
+
+    return query;
+  }, [params]);
+
   useEffect(() => {
     if (hasStartedRef.current) {
       return;
@@ -43,113 +133,172 @@ export default function AuthCallbackScreen() {
 
     hasStartedRef.current = true;
     let isMounted = true;
-    let subscription: { remove: () => void } | null = null;
 
-    function replaceAway(nextHref: "/(auth)/sign-in" | "/auth/reset-password", reason: string) {
+    function replaceAway(nextHref: "/(auth)/sign-in" | "/(tabs)", reason: string) {
       logCallback("route replaced", { nextHref, reason });
       router.replace(nextHref);
     }
 
-    async function processUrl(inputUrl: string | null, source: "initial" | "event") {
-      const hasInitialUrl = Boolean(inputUrl);
-      const targetUrl = inputUrl ?? "";
-      const parsed = targetUrl ? parseAuthCallbackUrl(targetUrl) : null;
-
-      logCallback("callback URL diagnostics", {
-        initialUrlReceived: hasInitialUrl,
-        pathname,
-        queryParamNames: parsed?.queryParamNames ?? [],
-        fragmentParamNames: parsed?.fragmentParamNames ?? [],
-        recoveryMethodSelected: parsed?.method ?? "invalid",
-      });
-
-      if (!targetUrl) {
-        if (!isMounted) return;
-        setState({
-          status: "error",
-          title: "Verification Failed",
-          message: "This link is malformed or incomplete. Request a new verification email and try again.",
-          nextHref: "/(auth)/sign-in",
-        });
-        return;
-      }
+    async function run() {
+      logCallback("callback processing started");
 
       try {
-        await supabase.auth.signOut({ scope: "local" });
+        const initialUrl = liveUrl ?? (await getInitialUrlOnce()) ?? "";
 
-        const result = await establishRecoverySessionFromUrl(targetUrl, {
-          exchangeCodeForSession: (code) => supabase.auth.exchangeCodeForSession(code),
-          setSession: (input) => supabase.auth.setSession(input),
-          verifyOtp: (input) => supabase.auth.verifyOtp(input),
-          getSession: () => supabase.auth.getSession(),
+        const parsed = initialUrl ? new URL(initialUrl) : null;
+        const queryParams = parsed ? parseParams(parsed.search) : fallbackQuery;
+        const hashParams = parsed ? parseParams(parsed.hash) : new URLSearchParams();
+        const callbackKey = buildCallbackKey(initialUrl || "no-url", queryParams, hashParams);
+
+        logCallback("URL processed", {
+          hasUrl: Boolean(initialUrl),
+          hasAuthPayload: hasAuthPayload(queryParams, hashParams),
         });
 
-        logCallback("session established", {
-          sessionEstablished: result.success,
-          callbackNavigationDestination: result.navigationTarget,
-        });
+        if (consumedCallbackKeys.has(callbackKey)) {
+          logCallback("callback already consumed", {
+            hasAuthPayload: hasAuthPayload(queryParams, hashParams),
+          });
 
-        if (!isMounted) return;
+          const {
+            data: { session: existingSession },
+          } = await supabase.auth.getSession();
 
-        if (!result.success) {
+          if (!isMounted) return;
+          replaceAway(existingSession?.user ? "/(tabs)" : "/(auth)/sign-in", "consumed-link");
+          return;
+        }
+
+        const accessToken = hashParams.get("access_token") ?? queryParams.get("access_token");
+        const refreshToken = hashParams.get("refresh_token") ?? queryParams.get("refresh_token");
+        const tokenHash = queryParams.get("token_hash") ?? hashParams.get("token_hash");
+        const rawType = queryParams.get("type") ?? hashParams.get("type");
+        const authType = mapType(rawType);
+        const queryError = queryParams.get("error_description") ?? queryParams.get("error");
+
+        if (!hasAuthPayload(queryParams, hashParams)) {
+          consumedCallbackKeys.add(callbackKey);
+
+          const {
+            data: { session: existingSession },
+          } = await supabase.auth.getSession();
+
+          if (!isMounted) return;
+          replaceAway(existingSession?.user ? "/(tabs)" : "/(auth)/sign-in", "no-auth-payload");
+          return;
+        }
+
+        if (queryError) {
+          consumedCallbackKeys.add(callbackKey);
+
+          if (!isMounted) return;
           setState({
             status: "error",
             title: "Verification Failed",
-            message: result.errorMessage ?? "This password reset link is invalid or has expired. Request a new one.",
+            message: mapCallbackErrorMessage(queryError),
             nextHref: "/(auth)/sign-in",
           });
           return;
         }
 
+        await supabase.auth.signOut({ scope: "local" });
+
+        if (accessToken && refreshToken) {
+          const { error: setSessionError } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+
+          if (setSessionError) {
+            consumedCallbackKeys.add(callbackKey);
+
+            if (!isMounted) return;
+            setState({
+              status: "error",
+              title: "Verification Failed",
+              message: mapCallbackErrorMessage(setSessionError.message),
+              nextHref: "/(auth)/sign-in",
+            });
+            return;
+          }
+        } else if (tokenHash && authType) {
+          const { error: verifyError } = await supabase.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: authType,
+          });
+
+          if (verifyError) {
+            consumedCallbackKeys.add(callbackKey);
+
+            if (!isMounted) return;
+            setState({
+              status: "error",
+              title: "Verification Failed",
+              message: mapCallbackErrorMessage(verifyError.message),
+              nextHref: "/(auth)/sign-in",
+            });
+            return;
+          }
+        } else {
+          consumedCallbackKeys.add(callbackKey);
+
+          if (!isMounted) return;
+          setState({
+            status: "error",
+            title: "Invalid Link",
+            message: "This link is malformed or incomplete. Request a new verification email and try again.",
+            nextHref: "/(auth)/sign-in",
+          });
+          return;
+        }
+
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        consumedCallbackKeys.add(callbackKey);
+
+        const wasRecoveryFlow = authType === "recovery" || rawType?.toLowerCase() === "recovery";
+        const nextHref = session?.user && !wasRecoveryFlow ? "/(tabs)" : "/(auth)/sign-in";
+        const successTitle = wasRecoveryFlow ? "Link Verified" : "Email Verified";
+        const successMessage = wasRecoveryFlow
+          ? "Your password reset link is verified. Continue to sign in."
+          : "Your email is verified. You can continue now.";
+
+        if (!isMounted) return;
         setState({
           status: "success",
-          title: "Link Verified",
-          message: "Your password reset link is verified. Set your new password to continue.",
-          nextHref: result.navigationTarget,
+          title: successTitle,
+          message: successMessage,
+          nextHref,
         });
 
-        logCallback("callback navigation target", {
-          callbackNavigationDestination: result.navigationTarget,
-        });
-
-        replaceAway(result.navigationTarget, source === "initial" ? "initial-url" : "url-event");
+        setTimeout(() => {
+          if (isMounted) {
+            replaceAway(nextHref, "callback-success");
+          }
+        }, 900);
       } catch (error) {
         if (!isMounted) return;
         setState({
           status: "error",
           title: "Verification Failed",
-          message: error instanceof Error ? error.message : "This password reset link is invalid or has expired. Request a new one.",
+          message: mapCallbackErrorMessage(error instanceof Error ? error.message : "unknown error"),
           nextHref: "/(auth)/sign-in",
         });
       }
     }
 
-    void (async () => {
-      const initialUrl = await Linking.getInitialURL().catch(() => null);
-      if (initialUrl) {
-        await processUrl(initialUrl, "initial");
-      } else if (__DEV__) {
-        logCallback("initial URL received", {
-          initialUrlReceived: false,
-          pathname,
-          queryParamNames: [],
-          fragmentParamNames: [],
-          recoveryMethodSelected: "invalid",
-        });
-      }
-    })();
-
-    subscription = Linking.addEventListener("url", (event) => {
-      void processUrl(event.url, "event");
-    });
+    void run();
 
     return () => {
       isMounted = false;
-      subscription?.remove();
     };
-  }, [pathname]);
+  }, []);
 
-  const buttonLabel = "Go to Sign In";
+  const buttonLabel = state.status === "success" && state.nextHref === "/(tabs)"
+    ? "Open RecordQuest"
+    : "Go to Sign In";
 
   return (
     <View style={styles.page}>

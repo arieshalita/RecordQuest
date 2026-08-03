@@ -46,33 +46,11 @@ export default function ForgotPasswordScreen() {
       );
 
       if (resetError) {
-        if (__DEV__) {
-          const sanitizedMessage = typeof resetError.message === "string" ? resetError.message : "unknown error";
-
-          console.warn("[RecordQuest][auth] resetPasswordForEmail failed", {
-            name: typeof resetError.name === "string" ? resetError.name : null,
-            code: typeof resetError.code === "string" ? resetError.code : null,
-            status: typeof resetError.status === "number" ? resetError.status : null,
-            message: sanitizedMessage,
-          });
-        }
-
         setError(mapPasswordResetErrorMessage(resetError.message));
         return;
       }
 
       setMessage("Password reset email sent. Check your inbox.");
-    } catch (unexpectedError) {
-      if (__DEV__) {
-        console.warn("[RecordQuest][auth] resetPasswordForEmail unexpected failure", {
-          name: unexpectedError instanceof Error ? unexpectedError.name : null,
-          code: null,
-          status: null,
-          message: unexpectedError instanceof Error ? unexpectedError.message : "unknown error",
-        });
-      }
-
-      setError("Could not send reset email right now. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
