@@ -1,13 +1,13 @@
+import { router } from "expo-router";
 import { useState } from "react";
 import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
+    ActivityIndicator,
+    Pressable,
+    StyleSheet,
+    Text,
+    TextInput,
+    View,
 } from "react-native";
-import { router } from "expo-router";
 import { AuthScreenShell } from "../../components/auth/AuthScreenShell";
 import { getAuthRedirectUrl, supabase } from "../../hooks/supabase-client";
 import { isValidEmail, mapPasswordResetErrorMessage, normalizeEmail } from "../../utils/auth-input";

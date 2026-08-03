@@ -1,4 +1,5 @@
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export const MIN_PASSWORD_LENGTH = 8;
 
 export function normalizeEmail(value: string): string {
   return value.trim().toLowerCase();
@@ -34,6 +35,28 @@ export function isEmailNotConfirmedError(error: string | null | undefined): bool
   return (error ?? "").toLowerCase().includes("email not confirmed");
 }
 
+export function validateResetPasswordInputs(
+  newPasswordInput: string,
+  confirmPasswordInput: string,
+): { valid: true; password: string } | { valid: false; error: string } {
+  const newPassword = newPasswordInput.trim();
+  const confirmPassword = confirmPasswordInput.trim();
+
+  if (!newPassword || !confirmPassword) {
+    return { valid: false, error: "Enter and confirm your new password." };
+  }
+
+  if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    return { valid: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
+  }
+
+  if (newPassword !== confirmPassword) {
+    return { valid: false, error: "New password and confirmation must match." };
+  }
+
+  return { valid: true, password: newPassword };
+}
+
 export function mapSignUpErrorMessage(error: string | null | undefined): string {
   const source = (error ?? "").toLowerCase();
 
@@ -62,4 +85,22 @@ export function mapSignUpErrorMessage(error: string | null | undefined): string 
 
 export function mapPasswordResetErrorMessage(_error: string | null | undefined): string {
   return "Could not send reset email right now. Please try again.";
+}
+
+export function mapPasswordUpdateErrorMessage(error: string | null | undefined): string {
+  const source = (error ?? "").toLowerCase();
+
+  if (source.includes("expired") || source.includes("invalid") || source.includes("session")) {
+    return "This password reset session is no longer valid. Request a new reset link.";
+  }
+
+  if (source.includes("password")) {
+    return "Use a stronger password and try again.";
+  }
+
+  if (source.includes("network") || source.includes("failed to fetch") || source.includes("fetch")) {
+    return "Network error. Check your connection and try again.";
+  }
+
+  return "We couldn't update your password right now. Please try again.";
 }

@@ -5,6 +5,7 @@ import * as Notifications from "expo-notifications";
 import { AuthProvider, useAuth } from "../providers/AuthProvider";
 import { registerForPushNotificationsAsync } from "../hooks/push-notifications";
 import { upsertUserPushToken } from "../hooks/recordquest-supabase-service";
+import { isRecoveryAuthRoute } from "../utils/auth-route-guard";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -30,6 +31,10 @@ function RootNavigator() {
   const pushRegistrationInFlightUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (isRecoveryAuthRoute(pathname)) {
+      return;
+    }
+
     if (!user?.id) {
       return;
     }
@@ -126,6 +131,7 @@ function RootNavigator() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="auth/callback" />
+      <Stack.Screen name="auth/reset-password" />
 
       <Stack.Protected guard={!!user && profileSetupStatus === "ready"}>
         <Stack.Screen name="(tabs)" />

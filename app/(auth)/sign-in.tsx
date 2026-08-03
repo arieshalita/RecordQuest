@@ -7,10 +7,11 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { AuthScreenShell } from "../../components/auth/AuthScreenShell";
 import { useAuth } from "../../providers/AuthProvider";
 import {
+  MIN_PASSWORD_LENGTH,
   isEmailNotConfirmedError,
   isValidEmail,
   mapSignInErrorMessage,
@@ -18,6 +19,7 @@ import {
 } from "../../utils/auth-input";
 
 export default function SignInScreen() {
+  const params = useLocalSearchParams<{ reset?: string }>();
   const { signIn, resendConfirmationEmail } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -49,7 +51,7 @@ export default function SignInScreen() {
       return;
     }
 
-    if (trimmedPassword.length < 8) {
+    if (trimmedPassword.length < MIN_PASSWORD_LENGTH) {
       setError("Use your full password to sign in.");
       return;
     }
@@ -120,8 +122,9 @@ export default function SignInScreen() {
 
   const normalizedEmail = normalizeEmail(email);
   const trimmedPassword = password.trim();
-  const canSubmit = isValidEmail(normalizedEmail) && trimmedPassword.length >= 8;
+  const canSubmit = isValidEmail(normalizedEmail) && trimmedPassword.length >= MIN_PASSWORD_LENGTH;
   const showResendConfirmationAction = isEmailNotConfirmedError(rawSignInError) && isValidEmail(normalizedEmail);
+  const showResetSuccessMessage = params.reset === "success";
 
   return (
     <AuthScreenShell
@@ -174,6 +177,9 @@ export default function SignInScreen() {
       </Pressable>
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      {showResetSuccessMessage ? (
+        <Text style={styles.successText}>Password updated. Sign in with your new password.</Text>
+      ) : null}
 
       {showResendConfirmationAction ? (
         <View style={styles.resendCard}>
@@ -274,6 +280,11 @@ const styles = StyleSheet.create({
   },
   errorText: {
     color: "#F59E0B",
+    marginBottom: 12,
+    fontSize: 13,
+  },
+  successText: {
+    color: "#C7F9CC",
     marginBottom: 12,
     fontSize: 13,
   },
