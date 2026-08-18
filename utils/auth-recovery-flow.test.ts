@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { Session } from "@supabase/supabase-js";
 import {
   processRecoveryCallbackAttempt,
+  selectRecoveryCallbackUrl,
   submitRecoveryPasswordUpdate,
 } from "./auth-recovery-flow";
 import { mapSignInErrorMessage } from "./auth-input";
@@ -27,6 +28,34 @@ function makeSessionResult(hasUser: boolean): { data: { session: Session | null 
 }
 
 async function runAuthRecoveryFlowTests(): Promise<void> {
+  const selectedInitialOverBareLive = selectRecoveryCallbackUrl({
+    liveUrl: "/auth/callback",
+    initialUrl: "recordquest://auth/callback?code=abc123&type=recovery",
+    fallbackQuery: new URLSearchParams(),
+    isDev: false,
+    devRecoveryUrl: null,
+  });
+
+  assert.equal(
+    selectedInitialOverBareLive,
+    "recordquest://auth/callback?code=abc123&type=recovery",
+    "initial URL with recovery payload must beat a bare live callback route",
+  );
+
+  const selectedFallbackOverBareUrls = selectRecoveryCallbackUrl({
+    liveUrl: "/auth/callback",
+    initialUrl: null,
+    fallbackQuery: new URLSearchParams("token_hash=hash123&type=recovery"),
+    isDev: false,
+    devRecoveryUrl: null,
+  });
+
+  assert.equal(
+    selectedFallbackOverBareUrls,
+    "recordquest://auth/callback?token_hash=hash123&type=recovery",
+    "fallback query recovery payload must beat a bare callback route",
+  );
+
   const consumed = new Set<string>();
 
   const recoverySuccess = await processRecoveryCallbackAttempt(

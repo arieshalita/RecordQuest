@@ -6,6 +6,7 @@ import { supabase } from "../../hooks/supabase-client";
 import {
   processRecoveryCallbackAttempt,
   RECOVERY_CALLBACK_TIMEOUT_MS,
+  selectRecoveryCallbackUrl,
 } from "../../utils/auth-recovery-flow";
 
 type CallbackState = {
@@ -16,20 +17,16 @@ type CallbackState = {
 };
 
 const consumedCallbackKeys = new Set<string>();
-let initialUrlPromise: Promise<string | null> | null = null;
 
-function getInitialUrlOnce(): Promise<string | null> {
-  if (!initialUrlPromise) {
-    initialUrlPromise = Linking.getInitialURL().catch(() => null);
-  }
-
-  return initialUrlPromise;
+function getInitialUrl(): Promise<string | null> {
+  return Linking.getInitialURL().catch(() => null);
 }
 
 export default function AuthCallbackScreen() {
   const params = useLocalSearchParams();
   const liveUrl = Linking.useURL();
   const hasStartedRef = useRef(false);
+  const isExitingErrorStateRef = useRef(false);
   const [state, setState] = useState<CallbackState>({
     status: "loading",
     title: "Verifying Link",
@@ -49,6 +46,21 @@ export default function AuthCallbackScreen() {
     return query;
   }, [params]);
 
+  async function exitRecoveryError(nextHref: "/(auth)/sign-in" | "/(auth)/forgot-password") {
+    if (isExitingErrorStateRef.current) {
+      return;
+    }
+
+    isExitingErrorStateRef.current = true;
+
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } finally {
+      router.replace(nextHref);
+      isExitingErrorStateRef.current = false;
+    }
+  }
+
   useEffect(() => {
     if (hasStartedRef.current) {
       return;
@@ -62,11 +74,18 @@ export default function AuthCallbackScreen() {
     }
 
     async function run() {
-      const initialUrl = liveUrl ?? (await getInitialUrlOnce());
+      const initialUrl = await getInitialUrl();
+      const selectedUrl = selectRecoveryCallbackUrl({
+        liveUrl,
+        initialUrl,
+        fallbackQuery,
+        isDev: false,
+        devRecoveryUrl: null,
+      });
 
       const result = await processRecoveryCallbackAttempt(
         {
-          inputUrl: initialUrl,
+          inputUrl: selectedUrl,
           fallbackQuery,
           consumedKeys: consumedCallbackKeys,
           isDev: false,
@@ -129,10 +148,10 @@ export default function AuthCallbackScreen() {
 
         {state.status === "error" ? (
           <View style={styles.errorActions}>
-            <Pressable style={styles.secondaryButton} onPress={() => router.replace("/(auth)/sign-in")}>
+            <Pressable style={styles.secondaryButton} onPress={() => void exitRecoveryError("/(auth)/sign-in")}>
               <Text style={styles.secondaryButtonText}>Back to Sign In</Text>
             </Pressable>
-            <Pressable style={styles.secondaryButton} onPress={() => router.replace("/(auth)/forgot-password")}>
+            <Pressable style={styles.secondaryButton} onPress={() => void exitRecoveryError("/(auth)/forgot-password")}>
               <Text style={styles.secondaryButtonText}>Request New Link</Text>
             </Pressable>
           </View>

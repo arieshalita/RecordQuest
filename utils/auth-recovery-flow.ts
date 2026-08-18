@@ -65,6 +65,8 @@ export type PasswordResetSubmitResult =
       error: string;
     };
 
+  type RecoveryUrlCandidateQuality = 0 | 1 | 2 | 3;
+
 function mapCallbackErrorMessage(error: string | null | undefined): string {
   const source = (error ?? "").toLowerCase();
 
@@ -128,6 +130,63 @@ function parsePayload(inputUrl: string): ParsedCallbackPayload {
   };
 }
 
+function assessRecoveryUrlCandidate(inputUrl: string): RecoveryUrlCandidateQuality {
+  let payload: ParsedCallbackPayload;
+
+  try {
+    payload = parsePayload(inputUrl);
+  } catch {
+    return 1;
+  }
+
+  if (payload.isRecovery && payload.method !== "invalid") {
+    return 3;
+  }
+
+  if (payload.hasAuthPayload) {
+    return 2;
+  }
+
+  return 1;
+}
+
+export function selectRecoveryCallbackUrl(input: {
+  liveUrl: string | null;
+  initialUrl: string | null;
+  fallbackQuery: URLSearchParams;
+  isDev: boolean;
+  devRecoveryUrl: string | null;
+}): string | null {
+  const fallbackQueryString = input.fallbackQuery.toString();
+  const fallbackUrl = fallbackQueryString
+    ? `recordquest://auth/callback?${fallbackQueryString}`
+    : null;
+
+  if (input.isDev && input.devRecoveryUrl) {
+    return input.devRecoveryUrl;
+  }
+
+  const candidates = [
+    input.initialUrl,
+    input.liveUrl,
+    fallbackUrl,
+  ].filter((value): value is string => Boolean(value));
+
+  let selectedUrl: string | null = null;
+  let selectedQuality: RecoveryUrlCandidateQuality = 0;
+
+  for (const candidate of candidates) {
+    const quality = assessRecoveryUrlCandidate(candidate);
+
+    if (quality > selectedQuality) {
+      selectedUrl = candidate;
+      selectedQuality = quality;
+    }
+  }
+
+  return selectedUrl ?? fallbackUrl ?? input.liveUrl ?? input.initialUrl ?? null;
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return await new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -157,15 +216,13 @@ export async function processRecoveryCallbackAttempt(
   },
   deps: CallbackProcessDependencies,
 ): Promise<CallbackProcessResult> {
-  const fallbackQueryString = input.fallbackQuery.toString();
-  const fallbackUrl = fallbackQueryString
-    ? `recordquest://auth/callback?${fallbackQueryString}`
-    : null;
-
-  const effectiveUrl =
-    input.isDev && input.devRecoveryUrl
-      ? input.devRecoveryUrl
-      : input.inputUrl ?? fallbackUrl;
+  const effectiveUrl = selectRecoveryCallbackUrl({
+    liveUrl: input.inputUrl,
+    initialUrl: null,
+    fallbackQuery: input.fallbackQuery,
+    isDev: input.isDev,
+    devRecoveryUrl: input.devRecoveryUrl,
+  });
 
   if (!effectiveUrl) {
     return {
