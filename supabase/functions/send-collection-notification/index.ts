@@ -165,8 +165,6 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  console.log("[RecordQuest][edge-collection] function started");
-
   const authHeader = req.headers.get("Authorization");
 
   try {
@@ -212,8 +210,6 @@ Deno.serve(async (req) => {
       error: authError,
     } = await userClient.auth.getUser();
 
-    console.log("[RecordQuest][edge-collection] caller authenticated:", Boolean(user?.id) && !authError);
-
     if (authError || !user?.id) {
       return jsonResponse(401, {
         ok: false,
@@ -231,11 +227,7 @@ Deno.serve(async (req) => {
       collectionItemId = null;
     }
 
-    console.log("[RecordQuest][edge-collection] collectionItemId present:", Boolean(collectionItemId));
-
     if (!collectionItemId) {
-      console.log("[RecordQuest][edge-collection] final sent:", false);
-      console.log("[RecordQuest][edge-collection] safe reason:", "invalid_collection_item");
       return jsonResponse(200, {
         ok: true,
         sent: false,
@@ -260,11 +252,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log("[RecordQuest][edge-collection] collection row found:", Boolean(collectionRow));
-
     if (!collectionRow) {
-      console.log("[RecordQuest][edge-collection] final sent:", false);
-      console.log("[RecordQuest][edge-collection] safe reason:", "invalid_collection_item");
       return jsonResponse(200, {
         ok: true,
         sent: false,
@@ -274,14 +262,8 @@ Deno.serve(async (req) => {
 
     const typedCollectionRow = collectionRow as CollectionRow;
     const ownershipConfirmed = typedCollectionRow.user_id === user.id;
-    console.log("[RecordQuest][edge-collection] ownership confirmed:", ownershipConfirmed);
 
     if (!ownershipConfirmed) {
-      console.log("[RecordQuest][edge-collection] final sent:", false);
-      console.log(
-        "[RecordQuest][edge-collection] safe reason:",
-        "collection_item_not_owned_by_caller"
-      );
       return jsonResponse(200, {
         ok: true,
         sent: false,
@@ -313,11 +295,8 @@ Deno.serve(async (req) => {
     }
 
     const recipientUserIds = dedupeFollowerIds((followRows as FollowRow[] | null) ?? [], user.id);
-    console.log("[RecordQuest][edge-collection] follower count:", recipientUserIds.length);
 
     if (!recipientUserIds.length) {
-      console.log("[RecordQuest][edge-collection] final sent:", false);
-      console.log("[RecordQuest][edge-collection] safe reason:", "no_followers");
       return jsonResponse(200, {
         ok: true,
         sent: false,
@@ -342,11 +321,8 @@ Deno.serve(async (req) => {
     }
 
     const recipientTokens = dedupeLatestTokens((tokenRows as PushTokenRow[] | null) ?? []);
-    console.log("[RecordQuest][edge-collection] recipient token count:", recipientTokens.length);
 
     if (!recipientTokens.length) {
-      console.log("[RecordQuest][edge-collection] final sent:", false);
-      console.log("[RecordQuest][edge-collection] safe reason:", "no_recipient_tokens");
       return jsonResponse(200, {
         ok: true,
         sent: false,
@@ -393,26 +369,17 @@ Deno.serve(async (req) => {
             ? [payload.data]
             : [];
 
-        console.log("[RecordQuest][edge-collection] Expo HTTP status:", expoResponse.status);
-
         if (!expoResponse.ok) {
-          console.log("[RecordQuest][edge-collection] Expo response status:", "http_error");
           failedCount += tokenBatch.length;
           console.warn("[RecordQuest][edge-collection] Expo push HTTP request failed");
           continue;
         }
 
         if (!tickets.length) {
-          console.log("[RecordQuest][edge-collection] Expo response status:", "missing_tickets");
           failedCount += tokenBatch.length;
           console.warn("[RecordQuest][edge-collection] Expo push response did not include tickets");
           continue;
         }
-
-        console.log(
-          "[RecordQuest][edge-collection] Expo response status:",
-          tickets.some((ticket) => ticket?.status === "ok") ? "ok_or_partial" : "not_ok"
-        );
 
         for (let index = 0; index < tokenBatch.length; index += 1) {
           const ticket = tickets[index];
@@ -427,12 +394,6 @@ Deno.serve(async (req) => {
         console.error("[RecordQuest][edge-collection] Expo push batch send failed:", safeErrorDetail(expoError));
       }
     }
-
-    console.log("[RecordQuest][edge-collection] final sent:", sentCount > 0);
-    console.log(
-      "[RecordQuest][edge-collection] safe reason:",
-      sentCount > 0 ? "none" : "expo_all_failed"
-    );
 
     return jsonResponse(200, {
       ok: true,

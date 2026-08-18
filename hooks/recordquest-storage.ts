@@ -219,10 +219,7 @@ export async function saveRecordQuestState(state: RecordQuestState, options?: Sa
     const authenticatedUserId = normalizeUserId(await getAuthenticatedUserId());
 
     if (expectedUserId && authenticatedUserId !== expectedUserId) {
-      console.warn("[RecordQuest][storage] skipping stale save because authenticated user changed", {
-        expectedUserId,
-        authenticatedUserId,
-      });
+      console.warn("[RecordQuest][storage] skipping stale save because authenticated user changed");
       return;
     }
 

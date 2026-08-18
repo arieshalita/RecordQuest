@@ -92,7 +92,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { data: cleanupResult, error: cleanupError } = await serviceClient.rpc(
+    const { error: cleanupError } = await serviceClient.rpc(
       "delete_recordquest_account_data",
       {
         target_user_id: user.id,
@@ -107,8 +107,6 @@ Deno.serve(async (req) => {
         reason: "cleanup_failed",
       });
     }
-
-    console.log("[RecordQuest][edge-delete-account] cleanup result:", cleanupResult ?? null);
 
     const { error: deleteUserError } = await serviceClient.auth.admin.deleteUser(user.id);
 

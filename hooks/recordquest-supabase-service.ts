@@ -58,11 +58,10 @@ const collectionNotificationInFlight = new Set<number>();
 const collectionNotificationCompleted = new Set<number>();
 
 function logSupabaseError(context: string, error: PostgrestError): void {
-  console.warn(`[RecordQuest][supabase] ${context} code:`, error.code);
-  console.warn(`[RecordQuest][supabase] ${context} message:`, error.message);
-  console.warn(`[RecordQuest][supabase] ${context} details:`, error.details);
-  console.warn(`[RecordQuest][supabase] ${context} hint:`, error.hint);
-  console.warn(`[RecordQuest][supabase] ${context} full error:`, error);
+  console.warn(`[RecordQuest][supabase] ${context} failed`, {
+    code: error.code,
+    message: error.message,
+  });
 }
 
 function toServiceError(context: string, error: PostgrestError): Error {
@@ -209,11 +208,7 @@ async function extractInvokeErrorDetails(error: unknown): Promise<CollectionNoti
 }
 
 function scheduleCollectionNotification(collectionItemId: number): void {
-  console.log("[RecordQuest][push] collection notification invoke attempted:", true);
-  console.log("[RecordQuest][push] collection item id sent to function:", collectionItemId);
-
   if (!isValidCollectionItemId(collectionItemId)) {
-    console.warn("[RecordQuest][push] collection notification invoke attempted:", false);
     return;
   }
 
@@ -221,7 +216,6 @@ function scheduleCollectionNotification(collectionItemId: number): void {
     collectionNotificationInFlight.has(collectionItemId) ||
     collectionNotificationCompleted.has(collectionItemId)
   ) {
-    console.warn("[RecordQuest][push] collection notification invoke attempted:", false);
     return;
   }
 
@@ -246,19 +240,11 @@ function scheduleCollectionNotification(collectionItemId: number): void {
             errorDetails.contextStatus
           );
         }
-        if (errorDetails.contextData !== undefined) {
-          console.warn(
-            "[RecordQuest][push] collection notification invoke response body:",
-            errorDetails.contextData
-          );
-        }
         return;
       }
 
       const sent = Boolean((data as { sent?: boolean } | null)?.sent);
       const reason = (data as { reason?: string } | null)?.reason ?? "none";
-
-      console.log("[RecordQuest][push] collection notification sent:", sent);
 
       if (!sent) {
         console.warn("[RecordQuest][push] collection notification not sent:", reason);
@@ -450,12 +436,9 @@ export async function saveRecords(
     .select("id");
 
   if (insertError) {
-    console.warn("[RecordQuest][push] collection insert succeeded:", false);
     logSupabaseError("saveRecords insert", insertError);
     throw toServiceError("Failed to save records", insertError);
   }
-
-  console.log("[RecordQuest][push] collection insert succeeded:", true);
 
   const insertedIds = new Set(
     ((insertedRows as RecordIdRow[] | null) ?? [])
@@ -464,10 +447,6 @@ export async function saveRecords(
   );
 
   const insertedNewCollectionItemIds = newlyInsertedCollectionItemIds.filter((id) => insertedIds.has(id));
-  console.log(
-    "[RecordQuest][push] inserted/new collection item id present:",
-    insertedNewCollectionItemIds.length > 0
-  );
 
   for (const collectionItemId of insertedNewCollectionItemIds) {
     scheduleCollectionNotification(collectionItemId);

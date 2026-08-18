@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import type { Session } from "@supabase/supabase-js";
 import {
   processRecoveryCallbackAttempt,
+  selectRecoveryCallbackUrlCandidate,
   selectRecoveryCallbackUrl,
+  shouldProcessRecoveryCallback,
   submitRecoveryPasswordUpdate,
 } from "./auth-recovery-flow";
 import { mapSignInErrorMessage } from "./auth-input";
@@ -54,6 +56,80 @@ async function runAuthRecoveryFlowTests(): Promise<void> {
     selectedFallbackOverBareUrls,
     "recordquest://auth/callback?token_hash=hash123&type=recovery",
     "fallback query recovery payload must beat a bare callback route",
+  );
+
+  const noPayloadSelection = selectRecoveryCallbackUrlCandidate({
+    liveUrl: "/auth/callback",
+    initialUrl: null,
+    fallbackQuery: new URLSearchParams(),
+    isDev: false,
+    devRecoveryUrl: null,
+  });
+
+  assert.equal(
+    shouldProcessRecoveryCallback({
+      selectedUrl: noPayloadSelection.url,
+      selectedSource: noPayloadSelection.source,
+      hasFreshRecoveryIntent: false,
+    }),
+    false,
+    "normal cold launch after prior reset must not process bare callback route",
+  );
+
+  const staleFailedSelection = selectRecoveryCallbackUrlCandidate({
+    liveUrl: null,
+    initialUrl: null,
+    fallbackQuery: new URLSearchParams("code=expired123&type=recovery"),
+    isDev: false,
+    devRecoveryUrl: null,
+  });
+
+  assert.equal(
+    shouldProcessRecoveryCallback({
+      selectedUrl: staleFailedSelection.url,
+      selectedSource: staleFailedSelection.source,
+      hasFreshRecoveryIntent: false,
+    }),
+    false,
+    "stale fallback callback params must not be replayed without a fresh recovery intent",
+  );
+
+  assert.equal(
+    shouldProcessRecoveryCallback({
+      selectedUrl: staleFailedSelection.url,
+      selectedSource: staleFailedSelection.source,
+      hasFreshRecoveryIntent: true,
+    }),
+    true,
+    "fresh recovery intent must allow callback processing",
+  );
+
+  const backgroundLiveSelection = selectRecoveryCallbackUrlCandidate({
+    liveUrl: "recordquest://auth/callback?code=fresh999&type=recovery",
+    initialUrl: null,
+    fallbackQuery: new URLSearchParams(),
+    isDev: false,
+    devRecoveryUrl: null,
+  });
+
+  assert.equal(
+    shouldProcessRecoveryCallback({
+      selectedUrl: backgroundLiveSelection.url,
+      selectedSource: backgroundLiveSelection.source,
+      hasFreshRecoveryIntent: true,
+    }),
+    true,
+    "fresh recovery deep links while app is backgrounded must process",
+  );
+
+  assert.equal(
+    shouldProcessRecoveryCallback({
+      selectedUrl: backgroundLiveSelection.url,
+      selectedSource: backgroundLiveSelection.source,
+      hasFreshRecoveryIntent: false,
+    }),
+    true,
+    "live callback URLs with auth payload remain processable when delivered directly",
   );
 
   const consumed = new Set<string>();

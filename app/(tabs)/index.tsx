@@ -380,11 +380,6 @@ export default function App() {
       storeDiscoveryRequestIdRef.current = requestId;
 
       const selectedBrowseLocation = browseLocationOverride ?? storeBrowseLocation;
-      console.log("[RecordQuest][stores] loading started", {
-        refresh: invalidateCacheForCurrentLocation,
-        mode: selectedBrowseLocation.mode,
-      });
-
       setIsLoadingStores(true);
       if (invalidateCacheForCurrentLocation) {
         setStoresMessage("Refreshing nearby stores...");
@@ -436,11 +431,6 @@ export default function App() {
         });
       }
 
-      console.log("[RecordQuest][stores] loading ended", {
-        usingFallback: result.usingFallback,
-        refresh: invalidateCacheForCurrentLocation,
-        mode: selectedBrowseLocation.mode,
-      });
     },
     [storeBrowseLocation]
   );

@@ -456,10 +456,7 @@ export async function saveOwnProfileIdentity(
 
   const trimmedUserId = userId.trim();
   if (trimmedUserId && trimmedUserId !== authUserId) {
-    console.warn("[RecordQuest][profile] attempted save with mismatched user id", {
-      suppliedUserId: trimmedUserId,
-      authUserId,
-    });
+    console.warn("[RecordQuest][profile] attempted save with mismatched user id");
     return genericProfileSaveError();
   }
 

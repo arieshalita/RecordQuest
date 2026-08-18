@@ -6,8 +6,10 @@ import { supabase } from "../../hooks/supabase-client";
 import {
   processRecoveryCallbackAttempt,
   RECOVERY_CALLBACK_TIMEOUT_MS,
-  selectRecoveryCallbackUrl,
+  selectRecoveryCallbackUrlCandidate,
+  shouldProcessRecoveryCallback,
 } from "../../utils/auth-recovery-flow";
+import { consumeRecentRecoveryIntent } from "../../utils/native-intent";
 
 type CallbackState = {
   status: "loading" | "success" | "error";
@@ -17,10 +19,6 @@ type CallbackState = {
 };
 
 const consumedCallbackKeys = new Set<string>();
-
-function getInitialUrl(): Promise<string | null> {
-  return Linking.getInitialURL().catch(() => null);
-}
 
 export default function AuthCallbackScreen() {
   const params = useLocalSearchParams();
@@ -69,23 +67,34 @@ export default function AuthCallbackScreen() {
     hasStartedRef.current = true;
     let isMounted = true;
 
-    function replaceAway(nextHref: "/(auth)/sign-in" | "/auth/reset-password") {
+    function replaceAway(nextHref: "/(auth)/sign-in" | "/auth/reset-password" | "/(tabs)") {
       router.replace(nextHref);
     }
 
     async function run() {
-      const initialUrl = await getInitialUrl();
-      const selectedUrl = selectRecoveryCallbackUrl({
+      const selection = selectRecoveryCallbackUrlCandidate({
         liveUrl,
-        initialUrl,
+        initialUrl: null,
         fallbackQuery,
         isDev: false,
         devRecoveryUrl: null,
       });
+      const hasFreshRecoveryIntent = Boolean(consumeRecentRecoveryIntent());
+      const shouldProcess = shouldProcessRecoveryCallback({
+        selectedUrl: selection.url,
+        selectedSource: selection.source,
+        hasFreshRecoveryIntent,
+      });
+
+      if (!shouldProcess) {
+        const { data } = await supabase.auth.getSession();
+        replaceAway(data.session?.user ? "/(tabs)" : "/(auth)/sign-in");
+        return;
+      }
 
       const result = await processRecoveryCallbackAttempt(
         {
-          inputUrl: selectedUrl,
+          inputUrl: selection.url,
           fallbackQuery,
           consumedKeys: consumedCallbackKeys,
           isDev: false,

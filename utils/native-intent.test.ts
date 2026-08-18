@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { normalizeNativeIntentPath } from "./native-intent";
+import { consumeRecentRecoveryIntent, normalizeNativeIntentPath } from "./native-intent";
 
 function runNativeIntentTests(): void {
   const hostStyle = normalizeNativeIntentPath("recordquest://auth/callback?code=abc&type=recovery");
@@ -24,6 +24,20 @@ function runNativeIntentTests(): void {
     "/auth/callback?code=abc&type=recovery",
     "stripped callback path must map to /auth/callback",
   );
+
+  const consumedFreshIntent = consumeRecentRecoveryIntent();
+  assert.equal(
+    typeof consumedFreshIntent === "string" && consumedFreshIntent.includes("/auth/callback"),
+    true,
+    "fresh recovery callback intent should be available exactly once",
+  );
+
+  const consumedAgain = consumeRecentRecoveryIntent();
+  assert.equal(consumedAgain, null, "consumed callback intent must not replay without a new deep link");
+
+  normalizeNativeIntentPath("/auth/callback?code=old123&type=recovery");
+  const expiredIntent = consumeRecentRecoveryIntent(Date.now() + 3 * 60 * 1000);
+  assert.equal(expiredIntent, null, "recovery callback intent must expire to prevent stale replay on later launch");
 
   console.log("native-intent tests passed");
 }

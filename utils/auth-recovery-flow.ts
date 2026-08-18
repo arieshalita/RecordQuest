@@ -65,7 +65,20 @@ export type PasswordResetSubmitResult =
       error: string;
     };
 
-  type RecoveryUrlCandidateQuality = 0 | 1 | 2 | 3;
+type RecoveryUrlCandidateQuality = 0 | 1 | 2 | 3;
+
+type RecoveryUrlCandidateSource = "liveUrl" | "initialUrl" | "fallbackQuery";
+
+export type RecoveryCallbackUrlSelection = {
+  url: string | null;
+  source: RecoveryUrlCandidateSource | "devOverride" | "none";
+};
+
+export type RecoveryCallbackProcessGateInput = {
+  selectedUrl: string | null;
+  selectedSource: RecoveryCallbackUrlSelection["source"];
+  hasFreshRecoveryIntent: boolean;
+};
 
 function mapCallbackErrorMessage(error: string | null | undefined): string {
   const source = (error ?? "").toLowerCase();
@@ -150,6 +163,73 @@ function assessRecoveryUrlCandidate(inputUrl: string): RecoveryUrlCandidateQuali
   return 1;
 }
 
+export function selectRecoveryCallbackUrlCandidate(input: {
+  liveUrl: string | null;
+  initialUrl: string | null;
+  fallbackQuery: URLSearchParams;
+  isDev: boolean;
+  devRecoveryUrl: string | null;
+}): RecoveryCallbackUrlSelection {
+  const fallbackQueryString = input.fallbackQuery.toString();
+  const fallbackUrl = fallbackQueryString
+    ? `recordquest://auth/callback?${fallbackQueryString}`
+    : null;
+
+  if (input.isDev && input.devRecoveryUrl) {
+    return {
+      url: input.devRecoveryUrl,
+      source: "devOverride",
+    };
+  }
+
+  const candidates: Array<{ url: string; source: RecoveryUrlCandidateSource }> = [];
+
+  if (input.initialUrl) {
+    candidates.push({
+      url: input.initialUrl,
+      source: "initialUrl",
+    });
+  }
+
+  if (input.liveUrl) {
+    candidates.push({
+      url: input.liveUrl,
+      source: "liveUrl",
+    });
+  }
+
+  if (fallbackUrl) {
+    candidates.push({
+      url: fallbackUrl,
+      source: "fallbackQuery",
+    });
+  }
+
+  let selected: { url: string; source: RecoveryUrlCandidateSource } | null = null;
+  let selectedQuality: RecoveryUrlCandidateQuality = 0;
+
+  for (const candidate of candidates) {
+    const quality = assessRecoveryUrlCandidate(candidate.url);
+
+    if (quality > selectedQuality) {
+      selected = candidate;
+      selectedQuality = quality;
+    }
+  }
+
+  if (!selected) {
+    return {
+      url: null,
+      source: "none",
+    };
+  }
+
+  return {
+    url: selected.url,
+    source: selected.source,
+  };
+}
+
 export function selectRecoveryCallbackUrl(input: {
   liveUrl: string | null;
   initialUrl: string | null;
@@ -157,34 +237,32 @@ export function selectRecoveryCallbackUrl(input: {
   isDev: boolean;
   devRecoveryUrl: string | null;
 }): string | null {
-  const fallbackQueryString = input.fallbackQuery.toString();
-  const fallbackUrl = fallbackQueryString
-    ? `recordquest://auth/callback?${fallbackQueryString}`
-    : null;
+  return selectRecoveryCallbackUrlCandidate(input).url;
+}
 
-  if (input.isDev && input.devRecoveryUrl) {
-    return input.devRecoveryUrl;
+function parsePayloadSafely(inputUrl: string): ParsedCallbackPayload | null {
+  try {
+    return parsePayload(inputUrl);
+  } catch {
+    return null;
+  }
+}
+
+export function shouldProcessRecoveryCallback(input: RecoveryCallbackProcessGateInput): boolean {
+  if (!input.selectedUrl) {
+    return false;
   }
 
-  const candidates = [
-    input.initialUrl,
-    input.liveUrl,
-    fallbackUrl,
-  ].filter((value): value is string => Boolean(value));
-
-  let selectedUrl: string | null = null;
-  let selectedQuality: RecoveryUrlCandidateQuality = 0;
-
-  for (const candidate of candidates) {
-    const quality = assessRecoveryUrlCandidate(candidate);
-
-    if (quality > selectedQuality) {
-      selectedUrl = candidate;
-      selectedQuality = quality;
-    }
+  const payload = parsePayloadSafely(input.selectedUrl);
+  if (!payload || !payload.hasAuthPayload) {
+    return false;
   }
 
-  return selectedUrl ?? fallbackUrl ?? input.liveUrl ?? input.initialUrl ?? null;
+  if (input.selectedSource === "fallbackQuery" && !input.hasFreshRecoveryIntent) {
+    return false;
+  }
+
+  return true;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
