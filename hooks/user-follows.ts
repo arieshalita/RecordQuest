@@ -1,4 +1,5 @@
 import { getCurrentSession, supabase } from "./supabase-client";
+import { isUserBlockedEitherDirection } from "./user-moderation";
 
 type FollowResult = {
   success: boolean;
@@ -123,6 +124,21 @@ export async function followUser(targetUserId: string): Promise<FollowResult> {
     return {
       success: false,
       error: "You cannot follow yourself.",
+    };
+  }
+
+  try {
+    const blocked = await isUserBlockedEitherDirection(currentUserId, resolvedAuthUserId);
+    if (blocked) {
+      return {
+        success: false,
+        error: "You cannot follow this user.",
+      };
+    }
+  } catch {
+    return {
+      success: false,
+      error: "Could not update follow status right now.",
     };
   }
 

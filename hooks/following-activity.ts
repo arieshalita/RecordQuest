@@ -1,4 +1,5 @@
 import { getCurrentSession, supabase } from "./supabase-client";
+import { getBlockedUserIdsForUser } from "./user-moderation";
 
 export type FollowingActivityItem = {
   id: string;
@@ -143,7 +144,20 @@ export async function loadFollowingActivity(limit = 25): Promise<FollowingActivi
     .map((row) => row.following_id?.trim())
     .filter((id): id is string => !!id);
 
-  if (followingIds.length === 0) {
+  let blockedUserIds = new Set<string>();
+  try {
+    blockedUserIds = await getBlockedUserIdsForUser(currentUserId);
+  } catch {
+    return {
+      items: [],
+      blockedByPolicy: false,
+      error: "Following activity is currently unavailable.",
+    };
+  }
+
+  const visibleFollowingIds = followingIds.filter((id) => !blockedUserIds.has(id));
+
+  if (visibleFollowingIds.length === 0) {
     return {
       items: [],
       blockedByPolicy: false,
@@ -153,7 +167,7 @@ export async function loadFollowingActivity(limit = 25): Promise<FollowingActivi
   const { data: activityData, error: activityError } = await supabase
     .from("activity")
     .select("id,user_id,entry,created_at")
-    .in("user_id", followingIds)
+    .in("user_id", visibleFollowingIds)
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -169,7 +183,7 @@ export async function loadFollowingActivity(limit = 25): Promise<FollowingActivi
   }
 
   const activityRows = ((activityData as ActivityRow[] | null) ?? []).filter(
-    (row) => !!row.id && !!row.user_id && !!row.entry
+    (row) => !!row.id && !!row.user_id && !!row.entry && !blockedUserIds.has(row.user_id)
   );
 
   if (activityRows.length === 0) {
@@ -183,17 +197,17 @@ export async function loadFollowingActivity(limit = 25): Promise<FollowingActivi
     supabase
       .from("profiles")
       .select("user_id,username,display_name")
-      .in("user_id", followingIds),
+      .in("user_id", visibleFollowingIds),
     supabase
       .from("records")
       .select("user_id,album,artist,cover,created_at")
-      .in("user_id", followingIds)
+      .in("user_id", visibleFollowingIds)
       .order("created_at", { ascending: false })
       .limit(500),
     supabase
       .from("wishlist")
       .select("user_id,album,artist,cover,created_at")
-      .in("user_id", followingIds)
+      .in("user_id", visibleFollowingIds)
       .order("created_at", { ascending: false })
       .limit(500),
   ]);

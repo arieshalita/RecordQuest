@@ -1,5 +1,6 @@
 import { supabase } from "./supabase-client";
 import type { User } from "@supabase/supabase-js";
+import { validatePublicProfileText } from "../utils/public-text-safety";
 
 export type PublicProfileIdentity = {
   userId: string;
@@ -480,6 +481,14 @@ export async function saveOwnProfileIdentity(
   }
 
   const trimmedBio = bioInput.trim();
+  const publicTextValidationError = validatePublicProfileText(trimmedDisplayName, trimmedBio);
+
+  if (publicTextValidationError) {
+    return {
+      success: false,
+      error: publicTextValidationError,
+    };
+  }
 
   const existingLookup = await supabase
     .from("profiles")

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ScrollView, Text, View, StyleSheet, Pressable, TextInput, Modal, ActivityIndicator } from "react-native";
+import { ScrollView, Text, View, StyleSheet, Pressable, TextInput, Modal, ActivityIndicator, Alert } from "react-native";
 import { router } from "expo-router";
 import { AlbumArt } from "../components/AlbumArt";
 import { TopBar } from "../components/TopBar";
@@ -28,6 +28,13 @@ import {
   loadPublicCollectionPreview,
   type PublicRecordPreview,
 } from "../hooks/public-collection-preview";
+import {
+  blockUser,
+  isUserBlockedEitherDirection,
+  REPORT_USER_REASONS,
+  submitUserReport,
+  type ReportUserReason,
+} from "../hooks/user-moderation";
 
 type ProfileScreenProps = {
   records: RecordItem[];
@@ -327,10 +334,21 @@ export function ProfileScreen({
   const [deleteAccountConfirmationText, setDeleteAccountConfirmationText] = useState("");
   const [deleteAccountError, setDeleteAccountError] = useState<string | null>(null);
   const [deleteAccountSuccess, setDeleteAccountSuccess] = useState<string | null>(null);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [isSubmittingReport, setIsSubmittingReport] = useState(false);
+  const [selectedReportReason, setSelectedReportReason] = useState<ReportUserReason>(REPORT_USER_REASONS[0]);
+  const [reportDetails, setReportDetails] = useState("");
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportSuccess, setReportSuccess] = useState<string | null>(null);
+  const [isBlockingUser, setIsBlockingUser] = useState(false);
+  const [blockError, setBlockError] = useState<string | null>(null);
+  const [blockSuccess, setBlockSuccess] = useState<string | null>(null);
+  const [isBlockedProfile, setIsBlockedProfile] = useState(false);
   const saveIdentityInFlightRef = useRef(false);
   const activeTargetUserIdRef = useRef<string | null>(targetUserId ?? null);
   const followMetaRequestIdRef = useRef(0);
   const profileIdentityRequestIdRef = useRef(0);
+  const blockStatusRequestIdRef = useRef(0);
 
   useEffect(() => {
     activeTargetUserIdRef.current = targetUserId ?? null;
@@ -648,6 +666,53 @@ export function ProfileScreen({
   }, [refreshProfileIdentity]);
 
   useEffect(() => {
+    const requestId = blockStatusRequestIdRef.current + 1;
+    blockStatusRequestIdRef.current = requestId;
+
+    if (isOwnProfile || !currentUserId || !targetUserId) {
+      setIsBlockedProfile(false);
+      return;
+    }
+
+    const scopedCurrentUserId = currentUserId;
+    const scopedTargetUserId = targetUserId;
+
+    let isActive = true;
+
+    async function loadBlockedState() {
+      try {
+        const blocked = await isUserBlockedEitherDirection(scopedCurrentUserId, scopedTargetUserId);
+
+        if (
+          !isActive ||
+          requestId !== blockStatusRequestIdRef.current ||
+          scopedTargetUserId !== activeTargetUserIdRef.current
+        ) {
+          return;
+        }
+
+        setIsBlockedProfile(blocked);
+      } catch {
+        if (
+          !isActive ||
+          requestId !== blockStatusRequestIdRef.current ||
+          scopedTargetUserId !== activeTargetUserIdRef.current
+        ) {
+          return;
+        }
+
+        setIsBlockedProfile(false);
+      }
+    }
+
+    void loadBlockedState();
+
+    return () => {
+      isActive = false;
+    };
+  }, [currentUserId, isOwnProfile, targetUserId]);
+
+  useEffect(() => {
     if (isOwnProfile || !targetUserId) {
       setPublicCollectionRecords([]);
       setPublicCollectionCount(0);
@@ -692,6 +757,16 @@ export function ProfileScreen({
     setSelectedPublicRecord(null);
     setIdentityError(null);
     setIdentitySuccess(null);
+    setReportError(null);
+    setReportSuccess(null);
+    setBlockError(null);
+    setBlockSuccess(null);
+    setIsBlockedProfile(false);
+    setIsReportModalOpen(false);
+    setIsSubmittingReport(false);
+    setIsBlockingUser(false);
+    setSelectedReportReason(REPORT_USER_REASONS[0]);
+    setReportDetails("");
   }, [targetUserId]);
 
   async function onToggleFollow() {
@@ -720,6 +795,80 @@ export function ProfileScreen({
     } finally {
       setIsFollowActionLoading(false);
     }
+  }
+
+  async function onSubmitUserReport() {
+    if (!targetUserId || isOwnProfile || isSubmittingReport) {
+      return;
+    }
+
+    setIsSubmittingReport(true);
+    setReportError(null);
+    setReportSuccess(null);
+
+    try {
+      const result = await submitUserReport(targetUserId, selectedReportReason, reportDetails);
+      if (!result.success) {
+        setReportError(result.error ?? "Could not submit your report right now.");
+        return;
+      }
+
+      setReportSuccess("Thanks. Your report was submitted.");
+      setReportDetails("");
+      setSelectedReportReason(REPORT_USER_REASONS[0]);
+      setIsReportModalOpen(false);
+    } finally {
+      setIsSubmittingReport(false);
+    }
+  }
+
+  async function onConfirmBlockUser() {
+    if (!targetUserId || isOwnProfile || isBlockingUser) {
+      return;
+    }
+
+    setIsBlockingUser(true);
+    setBlockError(null);
+    setBlockSuccess(null);
+
+    try {
+      const result = await blockUser(targetUserId);
+
+      if (!result.success) {
+        setBlockError(result.error ?? "Could not block this user right now.");
+        return;
+      }
+
+      setBlockSuccess(result.alreadyBlocked ? "User is already blocked." : "User blocked.");
+      setIsBlockedProfile(true);
+      setFollowingState(false);
+      setSelectedPublicRecord(null);
+      setPublicCollectionRecords([]);
+      setPublicCollectionCount(0);
+      setPublicCollectionError("Public collection is currently unavailable.");
+    } finally {
+      setIsBlockingUser(false);
+    }
+  }
+
+  function onBlockPress() {
+    Alert.alert(
+      "Block user?",
+      "You will stop seeing this user in social views, and follow relationships between you will be removed.",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Block",
+          style: "destructive",
+          onPress: () => {
+            void onConfirmBlockUser();
+          },
+        },
+      ]
+    );
   }
 
   async function onSaveIdentity() {
@@ -795,13 +944,13 @@ export function ProfileScreen({
             <Pressable
               style={styles.followMetaButton}
               onPress={() => {
-                if (!onOpenSocialConnections || !targetUserId) {
+                if (!onOpenSocialConnections || !targetUserId || (!isOwnProfile && isBlockedProfile)) {
                   return;
                 }
 
                 onOpenSocialConnections("followers", targetUserId, resolvedProfileName);
               }}
-              disabled={!onOpenSocialConnections || !targetUserId || isFollowMetaLoading}
+              disabled={!onOpenSocialConnections || !targetUserId || isFollowMetaLoading || (!isOwnProfile && isBlockedProfile)}
             >
               <Text style={styles.followMetaText}>
                 {isFollowMetaLoading ? "... Followers" : `${followerCount} Followers`}
@@ -810,13 +959,13 @@ export function ProfileScreen({
             <Pressable
               style={styles.followMetaButton}
               onPress={() => {
-                if (!onOpenSocialConnections || !targetUserId) {
+                if (!onOpenSocialConnections || !targetUserId || (!isOwnProfile && isBlockedProfile)) {
                   return;
                 }
 
                 onOpenSocialConnections("following", targetUserId, resolvedProfileName);
               }}
-              disabled={!onOpenSocialConnections || !targetUserId || isFollowMetaLoading}
+              disabled={!onOpenSocialConnections || !targetUserId || isFollowMetaLoading || (!isOwnProfile && isBlockedProfile)}
             >
               <Text style={styles.followMetaText}>
                 {isFollowMetaLoading ? "... Following" : `${followingCount} Following`}
@@ -910,7 +1059,7 @@ export function ProfileScreen({
           {identityError ? <Text style={styles.identityErrorText}>{identityError}</Text> : null}
           {identitySuccess ? <Text style={styles.identitySuccessText}>{identitySuccess}</Text> : null}
 
-          {!isOwnProfile && (
+          {!isOwnProfile && !isBlockedProfile && (
             <Pressable
               style={[styles.followButton, followingState ? styles.followingButton : styles.followCtaButton]}
               onPress={() => {
@@ -924,7 +1073,40 @@ export function ProfileScreen({
             </Pressable>
           )}
 
+          {!isOwnProfile && !isBlockedProfile ? (
+            <View style={styles.moderationActionsRow}>
+              <Pressable
+                style={styles.reportUserButton}
+                onPress={() => {
+                  setReportError(null);
+                  setReportSuccess(null);
+                  setIsReportModalOpen(true);
+                }}
+              >
+                <Text style={styles.reportUserButtonText}>Report User</Text>
+              </Pressable>
+              <Pressable
+                style={styles.blockUserButton}
+                onPress={onBlockPress}
+                disabled={isBlockingUser}
+              >
+                <Text style={styles.blockUserButtonText}>{isBlockingUser ? "Blocking..." : "Block User"}</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {!isOwnProfile && isBlockedProfile ? (
+            <View style={styles.blockedStateCard}>
+              <Text style={styles.blockedStateTitle}>User blocked</Text>
+              <Text style={styles.blockedStateText}>This user is now hidden from your social experience.</Text>
+            </View>
+          ) : null}
+
           {followError ? <Text style={styles.followErrorText}>{followError}</Text> : null}
+          {reportError ? <Text style={styles.followErrorText}>{reportError}</Text> : null}
+          {blockError ? <Text style={styles.followErrorText}>{blockError}</Text> : null}
+          {reportSuccess ? <Text style={styles.identitySuccessText}>{reportSuccess}</Text> : null}
+          {blockSuccess ? <Text style={styles.identitySuccessText}>{blockSuccess}</Text> : null}
         </View>
       </View>
 
@@ -1100,67 +1282,78 @@ export function ProfileScreen({
         </>
       ) : (
         <>
-          <View style={styles.statsRow}>
-            <StatCard
-              value={publicCollectionCount}
-              label="Records"
-              onPress={() => {
-                if (!targetUserId || !onOpenProfileRecords) {
-                  return;
-                }
+          {isBlockedProfile ? (
+            <View style={styles.emptyFeatureCard}>
+              <Text style={styles.emptyFeatureTitle}>User blocked</Text>
+              <Text style={styles.emptyFeatureText}>This user&apos;s public content is hidden.</Text>
+            </View>
+          ) : null}
 
-                onOpenProfileRecords(targetUserId, resolvedProfileName);
-              }}
-            />
-            <StatCard
-              value={followingCount}
-              label="Following"
-              onPress={() => {
-                if (!targetUserId || !onOpenSocialConnections) {
-                  return;
-                }
+          {!isBlockedProfile ? (
+            <View style={styles.statsRow}>
+              <StatCard
+                value={publicCollectionCount}
+                label="Records"
+                onPress={() => {
+                  if (!targetUserId || !onOpenProfileRecords) {
+                    return;
+                  }
 
-                onOpenSocialConnections("following", targetUserId, resolvedProfileName);
-              }}
-            />
-            <StatCard
-              value={followerCount}
-              label="Followers"
-              onPress={() => {
-                if (!targetUserId || !onOpenSocialConnections) {
-                  return;
-                }
+                  onOpenProfileRecords(targetUserId, resolvedProfileName);
+                }}
+              />
+              <StatCard
+                value={followingCount}
+                label="Following"
+                onPress={() => {
+                  if (!targetUserId || !onOpenSocialConnections) {
+                    return;
+                  }
 
-                onOpenSocialConnections("followers", targetUserId, resolvedProfileName);
-              }}
-            />
-          </View>
+                  onOpenSocialConnections("following", targetUserId, resolvedProfileName);
+                }}
+              />
+              <StatCard
+                value={followerCount}
+                label="Followers"
+                onPress={() => {
+                  if (!targetUserId || !onOpenSocialConnections) {
+                    return;
+                  }
 
-          <Text style={styles.sectionTitle}>Public Collection Preview</Text>
-          <Text style={styles.publicCollectionHint}>
-            Browsing {resolvedProfileName}&apos;s collection
-          </Text>
+                  onOpenSocialConnections("followers", targetUserId, resolvedProfileName);
+                }}
+              />
+            </View>
+          ) : null}
 
-          {isPublicCollectionLoading ? (
+          {!isBlockedProfile ? <Text style={styles.sectionTitle}>Public Collection Preview</Text> : null}
+          {!isBlockedProfile ? (
+            <Text style={styles.publicCollectionHint}>
+              Browsing {resolvedProfileName}&apos;s collection
+            </Text>
+          ) : null}
+
+          {!isBlockedProfile && isPublicCollectionLoading ? (
             <View style={styles.emptyFeatureCard}>
               <Text style={styles.emptyFeatureText}>Loading records...</Text>
             </View>
           ) : null}
 
-          {!isPublicCollectionLoading && publicCollectionError ? (
+          {!isBlockedProfile && !isPublicCollectionLoading && publicCollectionError ? (
             <View style={styles.emptyFeatureCard}>
               <Text style={styles.emptyFeatureTitle}>Preview unavailable</Text>
               <Text style={styles.emptyFeatureText}>{publicCollectionError}</Text>
             </View>
           ) : null}
 
-          {!isPublicCollectionLoading && !publicCollectionError && publicCollectionRecords.length === 0 ? (
+          {!isBlockedProfile && !isPublicCollectionLoading && !publicCollectionError && publicCollectionRecords.length === 0 ? (
             <View style={styles.emptyFeatureCard}>
               <Text style={styles.emptyFeatureTitle}>No public records yet.</Text>
             </View>
           ) : null}
 
-          {!isPublicCollectionLoading && !publicCollectionError
+          {!isBlockedProfile && !isPublicCollectionLoading && !publicCollectionError
             ? publicCollectionRecords.map((record) => (
                 <Pressable
                   key={record.id}
@@ -1304,6 +1497,81 @@ export function ProfileScreen({
               </Pressable>
             </View>
           </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+    <Modal
+      transparent
+      visible={isReportModalOpen}
+      animationType="fade"
+      onRequestClose={() => {
+        if (!isSubmittingReport) {
+          setIsReportModalOpen(false);
+        }
+      }}
+    >
+      <Pressable
+        style={styles.featureModalOverlay}
+        onPress={() => {
+          if (!isSubmittingReport) {
+            setIsReportModalOpen(false);
+          }
+        }}
+      >
+        <Pressable style={styles.reportModalCard} onPress={() => {}}>
+          <Text style={styles.reportModalTitle}>Report user</Text>
+          <Text style={styles.reportModalText}>Select a reason for this report.</Text>
+
+          <View style={styles.reportReasonList}>
+            {REPORT_USER_REASONS.map((reason) => {
+              const isSelected = selectedReportReason === reason;
+              return (
+                <Pressable
+                  key={reason}
+                  style={[styles.reportReasonButton, isSelected ? styles.reportReasonButtonSelected : null]}
+                  onPress={() => setSelectedReportReason(reason)}
+                  disabled={isSubmittingReport}
+                >
+                  <Text style={[styles.reportReasonButtonText, isSelected ? styles.reportReasonButtonTextSelected : null]}>
+                    {reason}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <TextInput
+            style={[styles.profileInput, styles.reportDetailsInput]}
+            value={reportDetails}
+            onChangeText={setReportDetails}
+            editable={!isSubmittingReport}
+            placeholder="Optional details"
+            placeholderTextColor="#8F8AA6"
+            multiline
+            textAlignVertical="top"
+            maxLength={500}
+          />
+
+          {reportError ? <Text style={styles.followErrorText}>{reportError}</Text> : null}
+
+          <View style={styles.reportModalActions}>
+            <Pressable
+              style={styles.deleteAccountModalSecondaryButton}
+              onPress={() => setIsReportModalOpen(false)}
+              disabled={isSubmittingReport}
+            >
+              <Text style={styles.deleteAccountModalSecondaryButtonText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={styles.reportSubmitButton}
+              onPress={() => {
+                void onSubmitUserReport();
+              }}
+              disabled={isSubmittingReport}
+            >
+              <Text style={styles.reportSubmitButtonText}>{isSubmittingReport ? "Submitting..." : "Submit"}</Text>
+            </Pressable>
+          </View>
         </Pressable>
       </Pressable>
     </Modal>
@@ -1573,6 +1841,57 @@ const styles = StyleSheet.create({
     color: "#FCA5A5",
     fontSize: 12,
     marginTop: 8,
+  },
+  moderationActionsRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+  },
+  reportUserButton: {
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.18)",
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+  },
+  reportUserButtonText: {
+    color: "#E8DECA",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  blockUserButton: {
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: "rgba(248, 113, 113, 0.36)",
+    backgroundColor: "rgba(248, 113, 113, 0.14)",
+  },
+  blockUserButtonText: {
+    color: "#FECACA",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  blockedStateCard: {
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.22)",
+    backgroundColor: "rgba(18, 16, 34, 0.82)",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  blockedStateTitle: {
+    color: "#FFF4D6",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  blockedStateText: {
+    color: "#CFC7E6",
+    fontSize: 12,
+    marginTop: 4,
+    lineHeight: 18,
   },
   statsRow: {
     flexDirection: "row",
@@ -2196,6 +2515,71 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(124, 58, 237, 0.34)",
     padding: 18,
+  },
+  reportModalCard: {
+    backgroundColor: "rgba(16, 14, 28, 0.98)",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.34)",
+    padding: 18,
+  },
+  reportModalTitle: {
+    color: "#F8EED4",
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  reportModalText: {
+    color: "#CFC7E6",
+    fontSize: 12,
+    marginTop: 6,
+    marginBottom: 12,
+  },
+  reportReasonList: {
+    gap: 8,
+    marginBottom: 12,
+  },
+  reportReasonButton: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(248, 238, 220, 0.12)",
+    backgroundColor: "rgba(255, 255, 255, 0.03)",
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+  },
+  reportReasonButtonSelected: {
+    borderColor: "rgba(124, 58, 237, 0.56)",
+    backgroundColor: "rgba(124, 58, 237, 0.18)",
+  },
+  reportReasonButtonText: {
+    color: "#E3D7BF",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  reportReasonButtonTextSelected: {
+    color: "#FFF4D6",
+    fontWeight: "700",
+  },
+  reportDetailsInput: {
+    minHeight: 82,
+  },
+  reportModalActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 14,
+  },
+  reportSubmitButton: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.48)",
+    backgroundColor: "rgba(124, 58, 237, 0.32)",
+  },
+  reportSubmitButtonText: {
+    color: "#FFF4D6",
+    fontSize: 12,
+    fontWeight: "800",
   },
   publicDetailModalCard: {
     width: "88%",

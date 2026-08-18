@@ -1,4 +1,5 @@
 import { supabase } from "./supabase-client";
+import { getBlockedUserIdsForUser } from "./user-moderation";
 
 export type DiscoverUser = {
   userId: string;
@@ -58,6 +59,8 @@ function dedupeUsers(users: DiscoverUser[]): DiscoverUser[] {
 }
 
 export async function getDiscoverUsers(currentUserId: string): Promise<DiscoverUser[]> {
+  const blockedUserIds = await getBlockedUserIdsForUser(currentUserId);
+
   const { data, error } = await supabase
     .from("profiles")
     .select(PROFILES_SELECT)
@@ -77,7 +80,9 @@ export async function getDiscoverUsers(currentUserId: string): Promise<DiscoverU
       .filter((user): user is DiscoverUser => !!user)
   );
 
-  const filtered = source.filter((user) => user.userId !== currentUserId);
+  const filtered = source.filter(
+    (user) => user.userId !== currentUserId && !blockedUserIds.has(user.userId)
+  );
 
   return filtered.sort((a, b) => a.displayName.localeCompare(b.displayName));
 }

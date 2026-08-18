@@ -1,4 +1,5 @@
 import { supabase } from "./supabase-client";
+import { getBlockedUserIdsForUser } from "./user-moderation";
 
 export type SocialConnectionsMode = "followers" | "following";
 
@@ -16,7 +17,7 @@ export type SocialConnectionsResult = {
   error?: string;
   errorCode?: string;
   errorMessage?: string;
-  errorStage?: "relation" | "profiles";
+  errorStage?: "relation" | "profiles" | "blocks";
   isTransientFailure?: boolean;
   isInvalidTarget?: boolean;
 };
@@ -89,6 +90,35 @@ export async function loadSocialConnections(
 
   const relationColumn = mode === "followers" ? "following_id" : "follower_id";
   const memberColumn = mode === "followers" ? "follower_id" : "following_id";
+  let blockedUserIds = new Set<string>();
+
+  if (currentUserId) {
+    try {
+      blockedUserIds = await getBlockedUserIdsForUser(currentUserId);
+    } catch (error) {
+      if (__DEV__) {
+        console.warn("[RecordQuest][social] blocklist query failed", {
+          mode,
+          viewedUserId: trimmedViewedUserId,
+          message: error instanceof Error ? error.message : "unknown",
+        });
+      }
+
+      return {
+        users: [],
+        blockedByPolicy: false,
+        error: mapLoadError(mode),
+        errorStage: "blocks",
+      };
+    }
+
+    if (blockedUserIds.has(trimmedViewedUserId)) {
+      return {
+        users: [],
+        blockedByPolicy: false,
+      };
+    }
+  }
 
   const { data: relationData, error: relationError } = await supabase
     .from("user_follows")
@@ -127,7 +157,7 @@ export async function loadSocialConnections(
     .map((row) => readTrimmedString(row[memberColumn as keyof FollowRow]))
     .filter((value) => value.length > 0));
 
-  const uniqueMemberIds = Array.from(new Set(memberIds));
+  const uniqueMemberIds = Array.from(new Set(memberIds)).filter((id) => !blockedUserIds.has(id));
 
   if (uniqueMemberIds.length === 0) {
     return {

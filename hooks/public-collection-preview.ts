@@ -1,5 +1,6 @@
-import { supabase } from "./supabase-client";
+import { getCurrentSession, supabase } from "./supabase-client";
 import { isValidAlbumArtUrl, normalizeAlbumArtUrlOrNull } from "../utils/album-art";
+import { isUserBlockedEitherDirection } from "./user-moderation";
 
 export type PublicRecordPreview = {
   id: number;
@@ -47,6 +48,17 @@ function isTransientSupabaseError(code: string | undefined, message: string): bo
   return /network|timeout|timed out|failed to fetch|temporar|unavailable|connection/i.test(normalized);
 }
 
+async function isBlockedFromPublicCollection(profileUserId: string): Promise<boolean> {
+  const session = await getCurrentSession();
+  const currentUserId = session?.user?.id?.trim() || "";
+
+  if (!currentUserId || currentUserId === profileUserId) {
+    return false;
+  }
+
+  return isUserBlockedEitherDirection(currentUserId, profileUserId);
+}
+
 export async function loadPublicCollectionPreview(
   profileUserId: string,
   limit = 8
@@ -54,6 +66,23 @@ export async function loadPublicCollectionPreview(
   const trimmedUserId = profileUserId.trim();
   if (!trimmedUserId) {
     return { records: [], blockedByPolicy: false };
+  }
+
+  try {
+    const blocked = await isBlockedFromPublicCollection(trimmedUserId);
+    if (blocked) {
+      return {
+        records: [],
+        blockedByPolicy: false,
+        error: "Public collection preview is currently unavailable.",
+      };
+    }
+  } catch {
+    return {
+      records: [],
+      blockedByPolicy: false,
+      error: "Public collection preview is currently unavailable.",
+    };
   }
 
   const { data, error } = await supabase
@@ -121,6 +150,23 @@ export async function loadPublicCollectionCount(
   const trimmedUserId = profileUserId.trim();
   if (!trimmedUserId) {
     return { count: 0, blockedByPolicy: false };
+  }
+
+  try {
+    const blocked = await isBlockedFromPublicCollection(trimmedUserId);
+    if (blocked) {
+      return {
+        count: 0,
+        blockedByPolicy: false,
+        error: "Public collection is currently unavailable.",
+      };
+    }
+  } catch {
+    return {
+      count: 0,
+      blockedByPolicy: false,
+      error: "Public collection is currently unavailable.",
+    };
   }
 
   const { count, error } = await supabase
