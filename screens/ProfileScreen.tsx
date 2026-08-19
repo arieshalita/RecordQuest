@@ -51,6 +51,8 @@ type ProfileScreenProps = {
   onOpenProfileRecords?: (userId: string, displayName: string) => void;
 };
 
+type ProfileIdentityStatus = "loading" | "ready" | "unavailable";
+
 type FeatureTile = {
   key: "store-explorer" | "achievements" | "collector-journal";
   icon: string;
@@ -313,6 +315,7 @@ export function ProfileScreen({
   const [profileDisplayNameState, setProfileDisplayNameState] = useState("");
   const [profileBio, setProfileBio] = useState("");
   const [isProfileIdentityLoading, setIsProfileIdentityLoading] = useState(false);
+  const [profileIdentityStatus, setProfileIdentityStatus] = useState<ProfileIdentityStatus>("loading");
   const [isEditingIdentity, setIsEditingIdentity] = useState(false);
   const [displayNameDraft, setDisplayNameDraft] = useState("");
   const [usernameDraft, setUsernameDraft] = useState("");
@@ -465,8 +468,14 @@ export function ProfileScreen({
 
     return map;
   }, [achievementCategories]);
-  const resolvedProfileName = profileDisplayNameState || (isOwnProfile ? ownProfileFallbackName : profileDisplayName ?? "Collector");
-  const isCurrentProfileIdentity = profileIdentityUserId === targetUserId;
+  const resolvedProfileName = profileDisplayNameState || (isOwnProfile ? ownProfileFallbackName : "Collector");
+  const showIdentityLoadingState = isProfileIdentityLoading || (!isOwnProfile && profileIdentityStatus === "loading");
+  const showIdentityUnavailableState = !isOwnProfile && profileIdentityStatus === "unavailable";
+  const profileNameText = showIdentityLoadingState
+    ? "Loading profile..."
+    : showIdentityUnavailableState
+      ? "Profile unavailable"
+      : resolvedProfileName;
 
   const achievementSummaryText = useMemo(() => {
     if (earnedAchievements.length === 0) {
@@ -477,9 +486,9 @@ export function ProfileScreen({
   }, [allBadges.length, earnedAchievements.length]);
 
   const profileInitial = useMemo(() => {
-    const source = resolvedProfileName || profileUsername || "R";
+    const source = profileNameText || profileUsername || "R";
     return source.trim().charAt(0).toUpperCase() || "R";
-  }, [profileUsername, resolvedProfileName]);
+  }, [profileNameText, profileUsername]);
 
   function formatAddedAtLabel(value?: string): string {
     if (!value) {
@@ -614,10 +623,13 @@ export function ProfileScreen({
       setBioDraft("");
       setProfileIdentityUserId(null);
       setIsProfileIdentityLoading(false);
+      setProfileIdentityStatus("ready");
       return;
     }
 
     setIsProfileIdentityLoading(true);
+    setProfileIdentityStatus("loading");
+    setProfileIdentityUserId(null);
     setProfileDisplayNameState("");
     setProfileUsername("");
     setProfileBio("");
@@ -629,8 +641,22 @@ export function ProfileScreen({
     }
 
     try {
-      const profile = await getProfileIdentity(targetUserId);
-      const fallbackName = isOwnProfile ? ownProfileFallbackName : profileDisplayName ?? "Collector";
+      const fallbackName = ownProfileFallbackName;
+      let profile = await getProfileIdentity(targetUserId);
+
+      // One lightweight retry for transient identity fetch issues on viewed public profiles.
+      if (!profile && !isOwnProfile) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 250));
+
+        if (
+          requestId !== profileIdentityRequestIdRef.current ||
+          targetUserId !== activeTargetUserIdRef.current
+        ) {
+          return;
+        }
+
+        profile = await getProfileIdentity(targetUserId);
+      }
 
       if (
         requestId !== profileIdentityRequestIdRef.current ||
@@ -639,15 +665,57 @@ export function ProfileScreen({
         return;
       }
 
-      setProfileDisplayNameState(profile?.displayName ?? fallbackName);
-      setProfileUsername(profile?.username ?? "");
-      setProfileBio(profile?.bio ?? "");
-      setProfileIdentityUserId(targetUserId);
+      if (profile) {
+        setProfileDisplayNameState(profile.displayName);
+        setProfileUsername(profile.username);
+        setProfileBio(profile.bio ?? "");
+        setProfileIdentityUserId(targetUserId);
+        setProfileIdentityStatus("ready");
+
+        if (isOwnProfile) {
+          setDisplayNameDraft(profile.displayName);
+          setUsernameDraft(profile.username);
+          setBioDraft(profile.bio ?? "");
+        }
+      } else if (isOwnProfile) {
+        setProfileDisplayNameState(fallbackName);
+        setProfileUsername("");
+        setProfileBio("");
+        setProfileIdentityUserId(targetUserId);
+        setProfileIdentityStatus("ready");
+        setDisplayNameDraft(fallbackName);
+        setUsernameDraft("");
+        setBioDraft("");
+      } else {
+        setProfileDisplayNameState("");
+        setProfileUsername("");
+        setProfileBio("");
+        setProfileIdentityUserId(targetUserId);
+        setProfileIdentityStatus("unavailable");
+      }
+    } catch {
+      if (
+        requestId !== profileIdentityRequestIdRef.current ||
+        targetUserId !== activeTargetUserIdRef.current
+      ) {
+        return;
+      }
 
       if (isOwnProfile) {
-        setDisplayNameDraft(profile?.displayName ?? fallbackName);
-        setUsernameDraft(profile?.username ?? "");
-        setBioDraft(profile?.bio ?? "");
+        setProfileDisplayNameState(ownProfileFallbackName);
+        setProfileUsername("");
+        setProfileBio("");
+        setProfileIdentityUserId(targetUserId);
+        setProfileIdentityStatus("ready");
+        setDisplayNameDraft(ownProfileFallbackName);
+        setUsernameDraft("");
+        setBioDraft("");
+      } else {
+        setProfileDisplayNameState("");
+        setProfileUsername("");
+        setProfileBio("");
+        setProfileIdentityUserId(targetUserId);
+        setProfileIdentityStatus("unavailable");
       }
     } finally {
       if (
@@ -659,7 +727,7 @@ export function ProfileScreen({
 
       setIsProfileIdentityLoading(false);
     }
-  }, [isOwnProfile, ownProfileFallbackName, profileDisplayName, targetUserId]);
+  }, [isOwnProfile, ownProfileFallbackName, targetUserId]);
 
   useEffect(() => {
     void refreshProfileIdentity();
@@ -927,17 +995,21 @@ export function ProfileScreen({
           <Text style={styles.avatarText}>{profileInitial}</Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.profileName}>{isCurrentProfileIdentity ? resolvedProfileName : (isOwnProfile ? ownProfileFallbackName : (profileDisplayName ?? "Collector"))}</Text>
+          <Text style={styles.profileName}>{profileNameText}</Text>
           <Text style={styles.profileSub}>
-            {!isCurrentProfileIdentity || isProfileIdentityLoading
+            {showIdentityLoadingState
               ? "Loading profile..."
+              : showIdentityUnavailableState
+                ? "Profile unavailable"
               : profileUsername
                 ? `@${profileUsername}`
                 : "Vinyl collector"}
           </Text>
           <Text style={styles.profileBio}>
-            {!isCurrentProfileIdentity || isProfileIdentityLoading
+            {showIdentityLoadingState
               ? "Loading profile..."
+              : showIdentityUnavailableState
+                ? "Profile details unavailable."
               : profileBio || "Building the ultimate crate-digging log."}
           </Text>
           <View style={styles.followMetaRow}>
