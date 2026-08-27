@@ -10,6 +10,19 @@ export type PublicProfileIdentity = {
   bio?: string;
 };
 
+export type ProfileIdentityLookupResult =
+  | {
+      status: "success";
+      profile: PublicProfileIdentity;
+    }
+  | {
+      status: "not-found";
+    }
+  | {
+      status: "error";
+      message?: string;
+    };
+
 export type SaveProfileIdentityResult = {
   success: boolean;
   error?: string;
@@ -32,8 +45,8 @@ function readString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function mapRowToIdentity(row: Record<string, unknown>): PublicProfileIdentity | null {
-  const userId = readString(row.user_id);
+function mapRowToIdentity(row: Record<string, unknown>, fallbackUserId?: string): PublicProfileIdentity | null {
+  const userId = readString(row.user_id) || readString(fallbackUserId);
   if (!userId) return null;
 
   const username = readString(row.username);
@@ -423,21 +436,52 @@ export async function completeOwnUsername(usernameInput: string): Promise<SavePr
   };
 }
 
-export async function getProfileIdentity(userId: string): Promise<PublicProfileIdentity | null> {
+export async function getProfileIdentity(userId: string): Promise<ProfileIdentityLookupResult> {
   const trimmedUserId = userId.trim();
-  if (!trimmedUserId) return null;
+  if (!trimmedUserId) {
+    return { status: "not-found" };
+  }
 
-  const { data, error } = await supabase
+  const byUserIdResult = await supabase
     .from("profiles")
     .select("id,user_id,username,display_name,avatar_url,bio")
     .eq("user_id", trimmedUserId)
-    .maybeSingle();
+    .limit(5);
 
-  if (error || !data || typeof data !== "object") {
-    return null;
+  if (byUserIdResult.error) {
+    return {
+      status: "error",
+      message: byUserIdResult.error.message,
+    };
   }
 
-  return mapRowToIdentity(data as Record<string, unknown>);
+  const byUserIdRows = (Array.isArray(byUserIdResult.data) ? byUserIdResult.data : []) as Array<Record<string, unknown>>;
+  const byUserIdIdentities = byUserIdRows
+    .map((row) => mapRowToIdentity(row, trimmedUserId))
+    .filter((value): value is PublicProfileIdentity => Boolean(value));
+
+  if (byUserIdIdentities.length > 0) {
+    if (__DEV__ && byUserIdIdentities.length > 1) {
+      console.warn("[RecordQuest][profile] duplicate profile rows detected for user_id", {
+        userId: trimmedUserId,
+        duplicateCount: byUserIdIdentities.length,
+      });
+    }
+
+    return {
+      status: "success",
+      profile: byUserIdIdentities[0],
+    };
+  }
+
+  if (byUserIdRows.length === 0) {
+    return { status: "not-found" };
+  }
+
+  return {
+    status: "error",
+    message: "Profile row could not be parsed.",
+  };
 }
 
 export async function saveOwnProfileIdentity(

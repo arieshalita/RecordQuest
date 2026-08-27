@@ -20,6 +20,7 @@ import {
 } from "../hooks/user-follows";
 import {
   getProfileIdentity,
+  type ProfileIdentityLookupResult,
   sanitizeUsername,
   saveOwnProfileIdentity,
 } from "../hooks/profile-identity";
@@ -51,7 +52,7 @@ type ProfileScreenProps = {
   onOpenProfileRecords?: (userId: string, displayName: string) => void;
 };
 
-type ProfileIdentityStatus = "loading" | "ready" | "unavailable";
+type ProfileIdentityStatus = "loading" | "ready" | "unavailable" | "error";
 
 type FeatureTile = {
   key: "store-explorer" | "achievements" | "collector-journal";
@@ -471,10 +472,13 @@ export function ProfileScreen({
   const resolvedProfileName = profileDisplayNameState || (isOwnProfile ? ownProfileFallbackName : "Collector");
   const showIdentityLoadingState = isProfileIdentityLoading || (!isOwnProfile && profileIdentityStatus === "loading");
   const showIdentityUnavailableState = !isOwnProfile && profileIdentityStatus === "unavailable";
+  const showIdentityErrorState = !isOwnProfile && profileIdentityStatus === "error";
   const profileNameText = showIdentityLoadingState
     ? "Loading profile..."
     : showIdentityUnavailableState
       ? "Profile unavailable"
+      : showIdentityErrorState
+        ? "Profile temporarily unavailable"
       : resolvedProfileName;
 
   const achievementSummaryText = useMemo(() => {
@@ -642,10 +646,10 @@ export function ProfileScreen({
 
     try {
       const fallbackName = ownProfileFallbackName;
-      let profile = await getProfileIdentity(targetUserId);
+      let lookupResult: ProfileIdentityLookupResult = await getProfileIdentity(targetUserId);
 
-      // One lightweight retry for transient identity fetch issues on viewed public profiles.
-      if (!profile && !isOwnProfile) {
+      // Retry once for transient query/network failures on viewed public profiles.
+      if (lookupResult.status === "error" && !isOwnProfile) {
         await new Promise<void>((resolve) => setTimeout(resolve, 250));
 
         if (
@@ -655,7 +659,7 @@ export function ProfileScreen({
           return;
         }
 
-        profile = await getProfileIdentity(targetUserId);
+        lookupResult = await getProfileIdentity(targetUserId);
       }
 
       if (
@@ -665,7 +669,9 @@ export function ProfileScreen({
         return;
       }
 
-      if (profile) {
+      if (lookupResult.status === "success") {
+        const profile = lookupResult.profile;
+
         setProfileDisplayNameState(profile.displayName);
         setProfileUsername(profile.username);
         setProfileBio(profile.bio ?? "");
@@ -686,12 +692,18 @@ export function ProfileScreen({
         setDisplayNameDraft(fallbackName);
         setUsernameDraft("");
         setBioDraft("");
-      } else {
+      } else if (lookupResult.status === "not-found") {
         setProfileDisplayNameState("");
         setProfileUsername("");
         setProfileBio("");
         setProfileIdentityUserId(targetUserId);
         setProfileIdentityStatus("unavailable");
+      } else {
+        setProfileDisplayNameState("");
+        setProfileUsername("");
+        setProfileBio("");
+        setProfileIdentityUserId(targetUserId);
+        setProfileIdentityStatus("error");
       }
     } catch {
       if (
@@ -715,7 +727,7 @@ export function ProfileScreen({
         setProfileUsername("");
         setProfileBio("");
         setProfileIdentityUserId(targetUserId);
-        setProfileIdentityStatus("unavailable");
+        setProfileIdentityStatus("error");
       }
     } finally {
       if (
@@ -1001,6 +1013,8 @@ export function ProfileScreen({
               ? "Loading profile..."
               : showIdentityUnavailableState
                 ? "Profile unavailable"
+              : showIdentityErrorState
+                ? "Could not load profile details"
               : profileUsername
                 ? `@${profileUsername}`
                 : "Vinyl collector"}
@@ -1010,8 +1024,15 @@ export function ProfileScreen({
               ? "Loading profile..."
               : showIdentityUnavailableState
                 ? "Profile details unavailable."
+              : showIdentityErrorState
+                ? "Please try again."
               : profileBio || "Building the ultimate crate-digging log."}
           </Text>
+          {showIdentityErrorState ? (
+            <Pressable style={styles.identityRetryButton} onPress={() => void refreshProfileIdentity()}>
+              <Text style={styles.identityRetryButtonText}>Retry</Text>
+            </Pressable>
+          ) : null}
           <View style={styles.followMetaRow}>
             <Pressable
               style={styles.followMetaButton}
@@ -1766,6 +1787,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 6,
     lineHeight: 16,
+  },
+  identityRetryButton: {
+    marginTop: 8,
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: "rgba(201, 199, 215, 0.4)",
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+  },
+  identityRetryButtonText: {
+    color: "#D3CEE3",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.2,
   },
   publicCollectionHint: {
     color: "#A7A1BD",
