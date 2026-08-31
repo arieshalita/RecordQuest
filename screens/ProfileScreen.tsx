@@ -7,6 +7,7 @@ import { StatCard } from "../components/StatCard";
 import { AnalyticsCard } from "../components/AnalyticsCard";
 import { AnalyticsSectionHeader } from "../components/AnalyticsSectionHeader";
 import { AchievementBadgeCard } from "../components/AchievementBadgeCard";
+import { ProfileTrophySection } from "../components/showdown/ProfileTrophySection";
 import { useAuth } from "../providers/AuthProvider";
 import type { RecordItem, AchievementCategory, CollectionAnalytics } from "../hooks/types";
 import { calculateCollectionAnalytics } from "../utils/analytics";
@@ -1241,6 +1242,8 @@ export function ProfileScreen({
             />
           </View>
 
+          <ProfileTrophySection userId={targetUserId ?? null} isOwnProfile={true} />
+
           <View style={styles.achievementSummaryCard}>
             <View style={styles.achievementSummaryHeader}>
               <View>
@@ -1418,6 +1421,10 @@ export function ProfileScreen({
                 }}
               />
             </View>
+          ) : null}
+
+          {!isBlockedProfile ? (
+            <ProfileTrophySection userId={targetUserId ?? null} isOwnProfile={false} />
           ) : null}
 
           {!isBlockedProfile ? <Text style={styles.sectionTitle}>Public Collection Preview</Text> : null}
