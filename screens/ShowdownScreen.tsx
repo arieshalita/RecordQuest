@@ -5,7 +5,9 @@ import { RecordQuestTheme } from "../constants/theme";
 import {
   getCompetitionOverview,
   getMyCompetitionEntry,
+  submitCompetitionEntry,
 } from "../hooks/showdown-service";
+import type { RecordItem } from "../hooks/types";
 import type {
   ShowdownMyEntry,
   ShowdownOverview,
@@ -15,9 +17,11 @@ import {
   ShowdownCompetitionCard,
   type ShowdownCardPhase,
 } from "../components/showdown/ShowdownCompetitionCard";
+import { ShowdownRecordPickerModal } from "../components/showdown/ShowdownRecordPickerModal";
 
 type ShowdownScreenProps = {
   competitionId: string;
+  records: RecordItem[];
   onBack?: () => void;
 };
 
@@ -243,7 +247,7 @@ function buildShowdownViewModel(
   };
 }
 
-function toErrorMessage(error: unknown): string {
+function toLoadErrorMessage(error: unknown): string {
   if (error && typeof error === "object" && "userMessage" in error) {
     const serviceError = error as ShowdownServiceError;
     if (typeof serviceError.userMessage === "string" && serviceError.userMessage.trim()) {
@@ -251,19 +255,29 @@ function toErrorMessage(error: unknown): string {
     }
   }
 
-  if (error instanceof Error && error.message.trim()) {
-    return error.message;
-  }
-
   return "Showdown is unavailable right now.";
 }
 
-export function ShowdownScreen({ competitionId, onBack }: ShowdownScreenProps) {
+function toSubmissionErrorMessage(error: unknown): string {
+  if (error && typeof error === "object" && "userMessage" in error) {
+    const serviceError = error as ShowdownServiceError;
+    if (typeof serviceError.userMessage === "string" && serviceError.userMessage.trim()) {
+      return serviceError.userMessage;
+    }
+  }
+
+  return "Could not enter this Showdown right now. Please try again.";
+}
+
+export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScreenProps) {
   const [overview, setOverview] = useState<ShowdownOverview | null>(null);
   const [myEntry, setMyEntry] = useState<ShowdownMyEntry | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isRecordPickerOpen, setIsRecordPickerOpen] = useState(false);
+  const [isSubmittingEntry, setIsSubmittingEntry] = useState(false);
+  const [submissionErrorMessage, setSubmissionErrorMessage] = useState<string | null>(null);
   const [clockTick, setClockTick] = useState(0);
   const requestIdRef = useRef(0);
   const trimmedCompetitionId = competitionId.trim();
@@ -309,7 +323,7 @@ export function ShowdownScreen({ competitionId, onBack }: ShowdownScreenProps) {
 
         setOverview(null);
         setMyEntry(null);
-        setErrorMessage(toErrorMessage(error));
+        setErrorMessage(toLoadErrorMessage(error));
       } finally {
         if (requestId === requestIdRef.current) {
           setIsLoading(false);
@@ -341,6 +355,66 @@ export function ShowdownScreen({ competitionId, onBack }: ShowdownScreenProps) {
 
     return buildShowdownViewModel(overview, myEntry, Date.now());
   }, [overview, myEntry, clockTick]);
+
+  const hasEntered = myEntry !== null || overview?.caller_has_entered === true;
+
+  async function handleSubmitRecord(record: RecordItem) {
+    if (isSubmittingEntry || !trimmedCompetitionId || hasEntered) {
+      return;
+    }
+
+    setIsSubmittingEntry(true);
+    setSubmissionErrorMessage(null);
+
+    try {
+      const createdEntry = await submitCompetitionEntry(trimmedCompetitionId, record.id, null);
+
+      setMyEntry(createdEntry);
+      setOverview((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          caller_has_entered: true,
+          total_active_entries: current.caller_has_entered
+            ? current.total_active_entries
+            : current.total_active_entries + 1,
+        };
+      });
+
+      setIsRecordPickerOpen(false);
+
+      void loadShowdown(true);
+    } catch (error) {
+      setSubmissionErrorMessage(toSubmissionErrorMessage(error));
+    } finally {
+      setIsSubmittingEntry(false);
+    }
+  }
+
+  function handlePressCta() {
+    if (!viewModel) {
+      return;
+    }
+
+    if (viewModel.phase !== "submissions" || hasEntered) {
+      return;
+    }
+
+    setSubmissionErrorMessage(null);
+    setIsRecordPickerOpen(true);
+  }
+
+  function closePicker() {
+    if (isSubmittingEntry) {
+      return;
+    }
+
+    setSubmissionErrorMessage(null);
+    setIsRecordPickerOpen(false);
+  }
 
   function noopAction() {
     // Intentionally empty during shell-only integration.
@@ -385,14 +459,25 @@ export function ShowdownScreen({ competitionId, onBack }: ShowdownScreenProps) {
           timingLine={viewModel.timingLine}
           nextLine={viewModel.nextLine}
           ctaLabel={viewModel.ctaLabel}
-          ctaDisabled={viewModel.ctaDisabled}
-          onPressCta={noopAction}
+          ctaDisabled={viewModel.ctaDisabled || viewModel.phase !== "submissions" || hasEntered}
+          onPressCta={handlePressCta}
           entryCount={viewModel.showEntryCount ? overview.total_active_entries : null}
-          hasEntered={myEntry !== null || overview.caller_has_entered}
+          hasEntered={hasEntered}
           enteredAlbumTitle={myEntry?.album_title ?? null}
           enteredArtistName={myEntry?.artist_name ?? null}
         />
       ) : null}
+
+      <ShowdownRecordPickerModal
+        visible={isRecordPickerOpen}
+        records={records}
+        isSubmitting={isSubmittingEntry}
+        errorMessage={submissionErrorMessage}
+        onClose={closePicker}
+        onSubmit={(selectedRecord) => {
+          void handleSubmitRecord(selectedRecord);
+        }}
+      />
     </ScrollView>
   );
 }
