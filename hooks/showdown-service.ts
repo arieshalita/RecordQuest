@@ -167,6 +167,8 @@ function rows<T>(data: unknown): T[] {
 
 function operationFallbackMessage(operation: string): string {
   switch (operation) {
+    case "get_current_competition":
+      return "We couldn't load Showdown right now.";
     case "get_competition_overview":
       return "We couldn't load this Showdown right now.";
     case "get_my_competition_entry":
@@ -454,6 +456,23 @@ export async function getCompetitionOverview(competitionId: string): Promise<Sho
   const row = firstRow<ShowdownOverviewRpcRow>(data);
   if (!row) {
     throw toUnexpectedServiceError("get_competition_overview");
+  }
+
+  const mapped = mapOverviewRow(row);
+  assertOverviewRow(mapped);
+  return mapped;
+}
+
+export async function getCurrentCompetition(): Promise<ShowdownOverview | null> {
+  const { data, error } = await supabase.rpc("get_current_competition");
+
+  if (error) {
+    throw toShowdownServiceError("get_current_competition", error as PostgrestError);
+  }
+
+  const row = firstRow<ShowdownOverviewRpcRow>(data);
+  if (!row) {
+    return null;
   }
 
   const mapped = mapOverviewRow(row);

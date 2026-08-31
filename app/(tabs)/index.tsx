@@ -39,6 +39,7 @@ import { HomeScreen } from "../../screens/HomeScreen";
 import { DiscoverUsersScreen } from "../../screens/DiscoverUsersScreen";
 import { SocialConnectionsScreen } from "../../screens/SocialConnectionsScreen";
 import { PublicCollectionScreen } from "../../screens/PublicCollectionScreen";
+import { ShowdownScreen } from "../../screens/ShowdownScreen";
 import { ConfirmPurchaseDetailsModal } from "../../components/ConfirmPurchaseDetailsModal";
 import { StatCard } from "../../components/StatCard";
 import { TopBar } from "../../components/TopBar";
@@ -56,6 +57,8 @@ import {
 import { getDiscoverUsers, type DiscoverUser } from "../../hooks/discover-users";
 import { loadFollowingActivity, type FollowingActivityItem } from "../../hooks/following-activity";
 import type { SocialConnectionsMode, SocialConnectionUser } from "../../hooks/social-connections";
+import { getCurrentCompetition } from "../../hooks/showdown-service";
+import type { ShowdownOverview, ShowdownServiceError } from "../../hooks/showdown-types";
 import {
   loadUserAchievementEarnedAt,
   persistAchievementEarnedAt,
@@ -94,6 +97,7 @@ const starterRecords: RecordItem[] = [
 const curatedFallbackStores: StoreItem[] = getCuratedFallbackStores();
 
 const FOLLOWING_FEED_REFRESH_COOLDOWN_MS = 45000;
+const SHOWDOWN_HOME_REFRESH_COOLDOWN_MS = 45000;
 const ALBUM_TYPEAHEAD_MIN_CHARS = 2;
 const ALBUM_TYPEAHEAD_DEBOUNCE_MS = 380;
 const STORE_LOCATION_MIN_CHARS = 3;
@@ -105,6 +109,84 @@ type StoreBrowseLocation = {
   latitude?: number;
   longitude?: number;
 };
+
+function readDateMs(value: string): number | null {
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function toShowdownHomeMeta(overview: ShowdownOverview): { status: string; cta: string } {
+  if (overview.is_cancelled) {
+    return {
+      status: "Cancelled",
+      cta: "Unavailable",
+    };
+  }
+
+  const nowMs = Date.now();
+  const submissionStartsAtMs = readDateMs(overview.submission_starts_at);
+  const submissionEndsAtMs = readDateMs(overview.submission_ends_at);
+  const votingStartsAtMs = readDateMs(overview.voting_starts_at);
+  const votingEndsAtMs = readDateMs(overview.voting_ends_at);
+  const resultsAtMs = readDateMs(overview.results_at);
+
+  if (
+    submissionStartsAtMs === null ||
+    submissionEndsAtMs === null ||
+    votingStartsAtMs === null ||
+    votingEndsAtMs === null ||
+    resultsAtMs === null
+  ) {
+    return {
+      status: "Unavailable",
+      cta: "Unavailable",
+    };
+  }
+
+  if (nowMs < submissionStartsAtMs) {
+    return {
+      status: "Coming soon",
+      cta: "Coming Soon",
+    };
+  }
+
+  if (nowMs < submissionEndsAtMs) {
+    return {
+      status: "Entries open",
+      cta: overview.caller_has_entered ? "View Showdown" : "Enter Showdown",
+    };
+  }
+
+  if (nowMs >= votingStartsAtMs && nowMs < votingEndsAtMs) {
+    return {
+      status: "Voting live",
+      cta: "Vote Now",
+    };
+  }
+
+  if (nowMs >= resultsAtMs) {
+    return {
+      status: "Results live",
+      cta: "View Results",
+    };
+  }
+
+  return {
+    status: "In progress",
+    cta: "View Showdown",
+  };
+}
+
+function toShowdownHomeErrorMessage(error: unknown): string {
+  if (error && typeof error === "object" && "userMessage" in error) {
+    const serviceError = error as ShowdownServiceError;
+    if (typeof serviceError.userMessage === "string" && serviceError.userMessage.trim()) {
+      return serviceError.userMessage;
+    }
+  }
+
+  return "Showdown is unavailable right now.";
+}
 
 // ═════════════════════════════════════════════════════════════════════════
 // TODO: ACCOUNTS PHASE – Authentication Integration Points
@@ -201,6 +283,9 @@ export default function App() {
   const [isFollowingActivityLoading, setIsFollowingActivityLoading] = useState(false);
   const [isFollowingActivityRefreshing, setIsFollowingActivityRefreshing] = useState(false);
   const [followingActivityError, setFollowingActivityError] = useState<string | null>(null);
+  const [currentShowdownOverview, setCurrentShowdownOverview] = useState<ShowdownOverview | null>(null);
+  const [isShowdownHomeLoading, setIsShowdownHomeLoading] = useState(false);
+  const [showdownHomeError, setShowdownHomeError] = useState<string | null>(null);
   const [selectedProfileUserId, setSelectedProfileUserId] = useState<string | null>(null);
   const [selectedProfileDisplayName, setSelectedProfileDisplayName] = useState<string | null>(null);
   const [profileBackScreen, setProfileBackScreen] = useState<"Home" | "DiscoverUsers" | "SocialList">("Home");
@@ -228,6 +313,8 @@ export default function App() {
   const lastAuthenticatedUserIdRef = useRef<string | null>(null);
   const lastFollowingFeedLoadRef = useRef(0);
   const hasLoadedFollowingFeedRef = useRef(false);
+  const lastShowdownHomeLoadRef = useRef(0);
+  const hasLoadedShowdownHomeRef = useRef(false);
   const suppressNextTypeaheadRef = useRef(false);
   const latestAlbumSearchRequestRef = useRef(0);
   const achievementEarnedAtInFlightRef = useRef(new Set<string>());
@@ -235,6 +322,7 @@ export default function App() {
   const dataLoadRequestIdRef = useRef(0);
   const saveRequestIdRef = useRef(0);
   const followingFeedRequestIdRef = useRef(0);
+  const showdownHomeRequestIdRef = useRef(0);
   const detailOpenRequestIdRef = useRef(0);
   const detailOpenStartedAtRef = useRef<number | null>(null);
   const detailRecordVisibleLoggedRequestIdRef = useRef<number | null>(null);
@@ -313,6 +401,7 @@ export default function App() {
 
     lastAuthenticatedUserIdRef.current = nextUserId;
     followingFeedRequestIdRef.current += 1;
+    showdownHomeRequestIdRef.current += 1;
     dataLoadRequestIdRef.current += 1;
     saveRequestIdRef.current += 1;
     setLoaded(false);
@@ -328,10 +417,15 @@ export default function App() {
     achievementEarnedAtInFlightRef.current.clear();
     hasLoadedFollowingFeedRef.current = false;
     lastFollowingFeedLoadRef.current = 0;
+    hasLoadedShowdownHomeRef.current = false;
+    lastShowdownHomeLoadRef.current = 0;
     setFollowingActivity([]);
     setFollowingActivityError(null);
     setIsFollowingActivityLoading(false);
     setIsFollowingActivityRefreshing(false);
+    setCurrentShowdownOverview(null);
+    setShowdownHomeError(null);
+    setIsShowdownHomeLoading(false);
     setDiscoverUsers([]);
     setDiscoverUsersError(null);
     setIsDiscoverUsersLoading(false);
@@ -902,6 +996,14 @@ export default function App() {
     setScreen("Stores");
   }, []);
 
+  const openShowdown = useCallback(() => {
+    if (!currentShowdownOverview?.competition_id) {
+      return;
+    }
+
+    setScreen("Showdown");
+  }, [currentShowdownOverview?.competition_id]);
+
   const loadFollowingFeed = useCallback(
     async (forceRefresh = false) => {
       if (!user?.id) {
@@ -976,11 +1078,84 @@ export default function App() {
     [user?.id]
   );
 
+  const loadHomeShowdown = useCallback(
+    async (forceRefresh = false) => {
+      if (!user?.id) {
+        showdownHomeRequestIdRef.current += 1;
+        hasLoadedShowdownHomeRef.current = false;
+        lastShowdownHomeLoadRef.current = 0;
+        setCurrentShowdownOverview(null);
+        setShowdownHomeError(null);
+        setIsShowdownHomeLoading(false);
+        return;
+      }
+
+      const expectedUserId = user.id;
+      const requestId = showdownHomeRequestIdRef.current + 1;
+      showdownHomeRequestIdRef.current = requestId;
+
+      const now = Date.now();
+      const isCooldownActive =
+        !forceRefresh &&
+        hasLoadedShowdownHomeRef.current &&
+        now - lastShowdownHomeLoadRef.current < SHOWDOWN_HOME_REFRESH_COOLDOWN_MS;
+
+      if (isCooldownActive) {
+        return;
+      }
+
+      setShowdownHomeError(null);
+      setIsShowdownHomeLoading(true);
+
+      try {
+        const overview = await getCurrentCompetition();
+
+        if (
+          requestId !== showdownHomeRequestIdRef.current ||
+          expectedUserId !== activeAuthUserIdRef.current
+        ) {
+          return;
+        }
+
+        setCurrentShowdownOverview(overview);
+        setShowdownHomeError(null);
+        hasLoadedShowdownHomeRef.current = true;
+        lastShowdownHomeLoadRef.current = Date.now();
+      } catch (error) {
+        if (
+          requestId !== showdownHomeRequestIdRef.current ||
+          expectedUserId !== activeAuthUserIdRef.current
+        ) {
+          return;
+        }
+
+        setCurrentShowdownOverview(null);
+        setShowdownHomeError(toShowdownHomeErrorMessage(error));
+      } finally {
+        if (
+          requestId !== showdownHomeRequestIdRef.current ||
+          expectedUserId !== activeAuthUserIdRef.current
+        ) {
+          return;
+        }
+
+        setIsShowdownHomeLoading(false);
+      }
+    },
+    [user?.id]
+  );
+
   useEffect(() => {
     if (screen !== "Home") return;
 
     void loadFollowingFeed(false);
   }, [loadFollowingFeed, screen]);
+
+  useEffect(() => {
+    if (screen !== "Home") return;
+
+    void loadHomeShowdown(false);
+  }, [loadHomeShowdown, screen]);
 
   // Cleanup success message timer on unmount
   useEffect(() => {
@@ -1554,6 +1729,55 @@ export default function App() {
             <StatCard value={visitedStoreCount} label="Stores Visited" onPress={openStoresVisited} />
           </View>
 
+          <Text style={styles.sectionTitle}>Showdown</Text>
+
+          {isShowdownHomeLoading ? (
+            <View style={styles.activityFeedStateCard} testID="showdown-home-card">
+              <ActivityIndicator size="small" color="#A78BFA" />
+              <Text style={styles.activityFeedStateText}>Finding the current Showdown...</Text>
+            </View>
+          ) : null}
+
+          {!isShowdownHomeLoading && showdownHomeError ? (
+            <View style={styles.activityFeedStateCard} testID="showdown-home-card">
+              <Text style={styles.activityFeedStateTitle}>Showdown unavailable.</Text>
+              <Text style={styles.activityFeedStateText}>{showdownHomeError}</Text>
+              <Pressable
+                testID="showdown-home-cta"
+                style={styles.activityFeedEmptyActionButton}
+                onPress={() => {
+                  void loadHomeShowdown(true);
+                }}
+              >
+                <Text style={styles.activityFeedEmptyActionButtonText}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {!isShowdownHomeLoading && !showdownHomeError && currentShowdownOverview ? (
+            <Pressable style={styles.showdownHomeCard} onPress={openShowdown} testID="showdown-home-card">
+              <View style={styles.showdownHomeCardTextWrap}>
+                <Text style={styles.showdownHomeStatusPill}>{toShowdownHomeMeta(currentShowdownOverview).status}</Text>
+                <Text style={styles.showdownHomeTitle} numberOfLines={1}>
+                  {currentShowdownOverview.title || "Current Showdown"}
+                </Text>
+                <Text style={styles.showdownHomeSubtitle} numberOfLines={2}>
+                  {currentShowdownOverview.description || "Join this round and help decide the winner."}
+                </Text>
+              </View>
+              <View style={styles.showdownHomeCtaWrap} testID="showdown-home-cta">
+                <Text style={styles.showdownHomeCtaText}>{toShowdownHomeMeta(currentShowdownOverview).cta}</Text>
+              </View>
+            </Pressable>
+          ) : null}
+
+          {!isShowdownHomeLoading && !showdownHomeError && !currentShowdownOverview ? (
+            <View style={styles.activityFeedStateCard} testID="showdown-home-card">
+              <Text style={styles.activityFeedStateTitle}>No active Showdown right now.</Text>
+              <Text style={styles.activityFeedStateText}>Check back soon for the next round.</Text>
+            </View>
+          ) : null}
+
           <Text style={styles.sectionTitle}>Quick Actions</Text>
 
           <View style={styles.dashboardGrid}>
@@ -1792,6 +2016,28 @@ export default function App() {
           }}
         />
       )}
+
+      {screen === "Showdown" && currentShowdownOverview ? (
+        <ShowdownScreen
+          competitionId={currentShowdownOverview.competition_id}
+          records={records}
+          onBack={() => setScreen("Home")}
+        />
+      ) : null}
+
+      {screen === "Showdown" && !currentShowdownOverview ? (
+        <View style={styles.cloudLoadingContainer}>
+          <Text style={styles.cloudLoadingText}>Showdown is unavailable right now.</Text>
+          <Pressable
+            style={styles.cloudRetryButton}
+            onPress={() => {
+              setScreen("Home");
+            }}
+          >
+            <Text style={styles.cloudRetryButtonText}>Back</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {screen === "AlbumDetail" && detailRecord ? (
         <AlbumDetailScreen
@@ -2293,6 +2539,56 @@ const styles = StyleSheet.create({
   dashboardGrid: {
     gap: 10,
     marginBottom: 8,
+  },
+  showdownHomeCard: {
+    backgroundColor: "rgba(16, 18, 25, 0.92)",
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.35)",
+    gap: 12,
+  },
+  showdownHomeCardTextWrap: {
+    gap: 6,
+  },
+  showdownHomeStatusPill: {
+    alignSelf: "flex-start",
+    color: "#E7D8FF",
+    backgroundColor: "rgba(124, 58, 237, 0.26)",
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.52)",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+    overflow: "hidden",
+  },
+  showdownHomeTitle: {
+    color: "#FFF4D6",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  showdownHomeSubtitle: {
+    color: "#A7A1BD",
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  showdownHomeCtaWrap: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(124, 58, 237, 0.26)",
+    borderWidth: 1,
+    borderColor: "rgba(124, 58, 237, 0.52)",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  showdownHomeCtaText: {
+    color: "#E7D8FF",
+    fontSize: 12,
+    fontWeight: "700",
   },
   statCard: {
     flex: 1,
