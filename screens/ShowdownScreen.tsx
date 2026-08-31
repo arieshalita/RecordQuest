@@ -4,6 +4,7 @@ import { TopBar } from "../components/TopBar";
 import { RecordQuestTheme } from "../constants/theme";
 import {
   getCompetitionOverview,
+  getCompetitionResults,
   getMyCompetitionEntry,
   getNextCompetitionMatchup,
   submitCompetitionVote,
@@ -14,6 +15,7 @@ import type {
   ShowdownMatchup,
   ShowdownMyEntry,
   ShowdownOverview,
+  ShowdownResultRow,
   ShowdownServiceError,
 } from "../hooks/showdown-types";
 import {
@@ -22,6 +24,7 @@ import {
 } from "../components/showdown/ShowdownCompetitionCard";
 import { ShowdownMatchupCard } from "../components/showdown/ShowdownMatchupCard";
 import { ShowdownRecordPickerModal } from "../components/showdown/ShowdownRecordPickerModal";
+import { ShowdownResultsList } from "../components/showdown/ShowdownResultsList";
 
 type ShowdownScreenProps = {
   competitionId: string;
@@ -270,7 +273,7 @@ function toSubmissionErrorMessage(error: unknown): string {
     }
   }
 
-  return "Could not enter this Showdown right now. Please try again.";
+  return "Could not complete that action right now. Please try again.";
 }
 
 export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScreenProps) {
@@ -289,9 +292,14 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
   const [isVoteSubmitting, setIsVoteSubmitting] = useState(false);
   const [selectedWinnerId, setSelectedWinnerId] = useState<string | null>(null);
   const [votingErrorMessage, setVotingErrorMessage] = useState<string | null>(null);
+  const [isResultsMode, setIsResultsMode] = useState(false);
+  const [results, setResults] = useState<ShowdownResultRow[]>([]);
+  const [isResultsLoading, setIsResultsLoading] = useState(false);
+  const [resultsErrorMessage, setResultsErrorMessage] = useState<string | null>(null);
   const [clockTick, setClockTick] = useState(0);
   const requestIdRef = useRef(0);
   const matchupRequestIdRef = useRef(0);
+  const resultsRequestIdRef = useRef(0);
   const trimmedCompetitionId = competitionId.trim();
 
   const loadShowdown = useCallback(
@@ -372,6 +380,7 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
 
   const canEnterSubmissionFlow = viewModel?.phase === "submissions" && !hasEntered;
   const canEnterVotingFlow = viewModel?.phase === "voting";
+  const canEnterResultsFlow = viewModel?.phase === "results";
 
   async function handleSubmitRecord(record: RecordItem) {
     if (isSubmittingEntry || !trimmedCompetitionId || hasEntered) {
@@ -444,6 +453,40 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
     }
   }
 
+  async function loadResults(): Promise<void> {
+    if (!trimmedCompetitionId) {
+      setResultsErrorMessage("Results are unavailable right now.");
+      setIsResultsLoading(false);
+      return;
+    }
+
+    const requestId = resultsRequestIdRef.current + 1;
+    resultsRequestIdRef.current = requestId;
+    setIsResultsLoading(true);
+    setResultsErrorMessage(null);
+
+    try {
+      const nextResults = await getCompetitionResults(trimmedCompetitionId);
+
+      if (requestId !== resultsRequestIdRef.current) {
+        return;
+      }
+
+      setResults(nextResults);
+    } catch (error) {
+      if (requestId !== resultsRequestIdRef.current) {
+        return;
+      }
+
+      setResults([]);
+      setResultsErrorMessage(toSubmissionErrorMessage(error));
+    } finally {
+      if (requestId === resultsRequestIdRef.current) {
+        setIsResultsLoading(false);
+      }
+    }
+  }
+
   async function handleVote(winnerEntryId: string): Promise<void> {
     if (!matchup || !trimmedCompetitionId || isVoteSubmitting) {
       return;
@@ -498,6 +541,27 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
     setVotingErrorMessage(null);
   }
 
+  function enterResultsMode() {
+    if (!canEnterResultsFlow) {
+      return;
+    }
+
+    setIsRecordPickerOpen(false);
+    setSubmissionErrorMessage(null);
+    leaveVotingMode();
+    setIsResultsMode(true);
+    setResults([]);
+    setResultsErrorMessage(null);
+    void loadResults();
+  }
+
+  function leaveResultsMode() {
+    setIsResultsMode(false);
+    setIsResultsLoading(false);
+    setResults([]);
+    setResultsErrorMessage(null);
+  }
+
   function handlePressCta() {
     if (!viewModel) {
       return;
@@ -515,6 +579,11 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
 
     if (viewModel.phase === "voting") {
       enterVotingMode();
+      return;
+    }
+
+    if (viewModel.phase === "results") {
+      enterResultsMode();
     }
   }
 
@@ -535,7 +604,7 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
     <ScrollView contentContainerStyle={styles.page} testID="showdown-screen">
       <TopBar title="Showdown" back={onBack ?? noopAction} />
 
-      {!isVotingMode ? <Text style={styles.kicker}>Weekly Challenge</Text> : null}
+      {!isVotingMode && !isResultsMode ? <Text style={styles.kicker}>Weekly Challenge</Text> : null}
 
       {isLoading ? (
         <View style={styles.stateCard}>
@@ -560,7 +629,7 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
         </View>
       ) : null}
 
-      {!isLoading && !errorMessage && overview && viewModel && !isVotingMode ? (
+      {!isLoading && !errorMessage && overview && viewModel && !isVotingMode && !isResultsMode ? (
         <ShowdownCompetitionCard
           title={overview.title}
           description={cleanDescription(overview.description)}
@@ -572,7 +641,13 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
           ctaLabel={viewModel.ctaLabel}
           ctaDisabled={
             viewModel.ctaDisabled ||
-            (viewModel.phase === "submissions" ? !canEnterSubmissionFlow : viewModel.phase !== "voting")
+            (viewModel.phase === "submissions"
+              ? !canEnterSubmissionFlow
+              : viewModel.phase === "voting"
+                ? !canEnterVotingFlow
+                : viewModel.phase === "results"
+                  ? !canEnterResultsFlow
+                  : true)
           }
           onPressCta={handlePressCta}
           entryCount={viewModel.showEntryCount ? overview.total_active_entries : null}
@@ -648,8 +723,82 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
         </View>
       ) : null}
 
+      {!isLoading && !errorMessage && overview && viewModel && isResultsMode ? (
+        <View testID="showdown-results-view">
+          <View style={styles.votingHeaderCard}>
+            <Text style={styles.votingTitle}>Results</Text>
+            <Text style={styles.votingSubtitle}>Final placements are locked in.</Text>
+          </View>
+
+          {isResultsLoading ? (
+            <View style={styles.stateCard}>
+              <ActivityIndicator size="small" color={RecordQuestTheme.colors.accent} />
+              <Text style={styles.stateTitle}>Loading results...</Text>
+              <Text style={styles.stateText}>Revealing this round&apos;s standings.</Text>
+            </View>
+          ) : null}
+
+          {!isResultsLoading && resultsErrorMessage ? (
+            <View style={styles.stateCard}>
+              <Text style={styles.stateTitle}>Couldn&apos;t load results</Text>
+              <Text style={styles.stateText}>{resultsErrorMessage}</Text>
+              <View style={styles.stateButtonRow}>
+                <Pressable
+                  style={({ pressed }) => [styles.retryButton, pressed ? styles.retryButtonPressed : null]}
+                  onPress={() => {
+                    void loadResults();
+                  }}
+                >
+                  <Text style={styles.retryButtonText}>Retry</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [styles.retryButton, pressed ? styles.retryButtonPressed : null]}
+                  onPress={leaveResultsMode}
+                >
+                  <Text style={styles.retryButtonText}>Back to Showdown</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+
+          {!isResultsLoading && !resultsErrorMessage && results.length === 0 ? (
+            <View style={styles.stateCard}>
+              <Text style={styles.stateTitle}>Results aren&apos;t ready yet</Text>
+              <Text style={styles.stateText}>Check back shortly for final placements.</Text>
+              <View style={styles.stateButtonRow}>
+                <Pressable
+                  style={({ pressed }) => [styles.retryButton, pressed ? styles.retryButtonPressed : null]}
+                  onPress={() => {
+                    void loadResults();
+                  }}
+                >
+                  <Text style={styles.retryButtonText}>Retry</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [styles.retryButton, pressed ? styles.retryButtonPressed : null]}
+                  onPress={leaveResultsMode}
+                >
+                  <Text style={styles.retryButtonText}>Back to Showdown</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+
+          {!isResultsLoading && !resultsErrorMessage && results.length > 0 ? (
+            <ShowdownResultsList
+              results={results}
+              myEntryId={myEntry?.id ?? null}
+              minimumEntriesForAward={overview.minimum_entries_for_award}
+              totalActiveEntries={overview.total_active_entries}
+              transitionKey={results.map((row) => row.entry_id).join("|")}
+              onBackToShowdown={leaveResultsMode}
+            />
+          ) : null}
+        </View>
+      ) : null}
+
       <ShowdownRecordPickerModal
-        visible={isRecordPickerOpen && !isVotingMode}
+        visible={isRecordPickerOpen && !isVotingMode && !isResultsMode}
         records={records}
         isSubmitting={isSubmittingEntry}
         errorMessage={submissionErrorMessage}
@@ -738,7 +887,13 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 10,
   },
+  stateButtonRow: {
+    width: "100%",
+    flexDirection: "row",
+    gap: 10,
+  },
   retryButton: {
+    flex: 1,
     marginTop: 6,
     minHeight: 40,
     paddingHorizontal: 16,
