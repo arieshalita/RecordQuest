@@ -5,10 +5,13 @@ import { RecordQuestTheme } from "../constants/theme";
 import {
   getCompetitionOverview,
   getMyCompetitionEntry,
+  getNextCompetitionMatchup,
+  submitCompetitionVote,
   submitCompetitionEntry,
 } from "../hooks/showdown-service";
 import type { RecordItem } from "../hooks/types";
 import type {
+  ShowdownMatchup,
   ShowdownMyEntry,
   ShowdownOverview,
   ShowdownServiceError,
@@ -17,6 +20,7 @@ import {
   ShowdownCompetitionCard,
   type ShowdownCardPhase,
 } from "../components/showdown/ShowdownCompetitionCard";
+import { ShowdownMatchupCard } from "../components/showdown/ShowdownMatchupCard";
 import { ShowdownRecordPickerModal } from "../components/showdown/ShowdownRecordPickerModal";
 
 type ShowdownScreenProps = {
@@ -278,8 +282,16 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
   const [isRecordPickerOpen, setIsRecordPickerOpen] = useState(false);
   const [isSubmittingEntry, setIsSubmittingEntry] = useState(false);
   const [submissionErrorMessage, setSubmissionErrorMessage] = useState<string | null>(null);
+  const [isVotingMode, setIsVotingMode] = useState(false);
+  const [matchup, setMatchup] = useState<ShowdownMatchup | null>(null);
+  const [hasLoadedFirstMatchup, setHasLoadedFirstMatchup] = useState(false);
+  const [isMatchupLoading, setIsMatchupLoading] = useState(false);
+  const [isVoteSubmitting, setIsVoteSubmitting] = useState(false);
+  const [selectedWinnerId, setSelectedWinnerId] = useState<string | null>(null);
+  const [votingErrorMessage, setVotingErrorMessage] = useState<string | null>(null);
   const [clockTick, setClockTick] = useState(0);
   const requestIdRef = useRef(0);
+  const matchupRequestIdRef = useRef(0);
   const trimmedCompetitionId = competitionId.trim();
 
   const loadShowdown = useCallback(
@@ -358,6 +370,9 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
 
   const hasEntered = myEntry !== null || overview?.caller_has_entered === true;
 
+  const canEnterSubmissionFlow = viewModel?.phase === "submissions" && !hasEntered;
+  const canEnterVotingFlow = viewModel?.phase === "voting";
+
   async function handleSubmitRecord(record: RecordItem) {
     if (isSubmittingEntry || !trimmedCompetitionId || hasEntered) {
       return;
@@ -394,17 +409,113 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
     }
   }
 
+  async function loadNextMatchup(): Promise<void> {
+    if (!trimmedCompetitionId) {
+      setVotingErrorMessage("Voting is not available right now.");
+      setIsMatchupLoading(false);
+      return;
+    }
+
+    const requestId = matchupRequestIdRef.current + 1;
+    matchupRequestIdRef.current = requestId;
+    setIsMatchupLoading(true);
+    setVotingErrorMessage(null);
+
+    try {
+      const nextMatchup = await getNextCompetitionMatchup(trimmedCompetitionId);
+
+      if (requestId !== matchupRequestIdRef.current) {
+        return;
+      }
+
+      setMatchup(nextMatchup);
+      setHasLoadedFirstMatchup(true);
+    } catch (error) {
+      if (requestId !== matchupRequestIdRef.current) {
+        return;
+      }
+
+      setVotingErrorMessage(toSubmissionErrorMessage(error));
+      setHasLoadedFirstMatchup(true);
+    } finally {
+      if (requestId === matchupRequestIdRef.current) {
+        setIsMatchupLoading(false);
+      }
+    }
+  }
+
+  async function handleVote(winnerEntryId: string): Promise<void> {
+    if (!matchup || !trimmedCompetitionId || isVoteSubmitting) {
+      return;
+    }
+
+    const activeMatchup = matchup;
+    setSelectedWinnerId(winnerEntryId);
+    setIsVoteSubmitting(true);
+    setVotingErrorMessage(null);
+
+    try {
+      await submitCompetitionVote(
+        trimmedCompetitionId,
+        activeMatchup.entry_a.id,
+        activeMatchup.entry_b.id,
+        winnerEntryId
+      );
+
+      setSelectedWinnerId(null);
+      setMatchup(null);
+      await loadNextMatchup();
+    } catch (error) {
+      setSelectedWinnerId(null);
+      setVotingErrorMessage(toSubmissionErrorMessage(error));
+    } finally {
+      setIsVoteSubmitting(false);
+    }
+  }
+
+  function enterVotingMode() {
+    if (!canEnterVotingFlow) {
+      return;
+    }
+
+    setIsRecordPickerOpen(false);
+    setSubmissionErrorMessage(null);
+    setIsVotingMode(true);
+    setMatchup(null);
+    setHasLoadedFirstMatchup(false);
+    setSelectedWinnerId(null);
+    setVotingErrorMessage(null);
+    void loadNextMatchup();
+  }
+
+  function leaveVotingMode() {
+    setIsVotingMode(false);
+    setMatchup(null);
+    setHasLoadedFirstMatchup(false);
+    setIsMatchupLoading(false);
+    setIsVoteSubmitting(false);
+    setSelectedWinnerId(null);
+    setVotingErrorMessage(null);
+  }
+
   function handlePressCta() {
     if (!viewModel) {
       return;
     }
 
-    if (viewModel.phase !== "submissions" || hasEntered) {
+    if (viewModel.phase === "submissions") {
+      if (!canEnterSubmissionFlow) {
+        return;
+      }
+
+      setSubmissionErrorMessage(null);
+      setIsRecordPickerOpen(true);
       return;
     }
 
-    setSubmissionErrorMessage(null);
-    setIsRecordPickerOpen(true);
+    if (viewModel.phase === "voting") {
+      enterVotingMode();
+    }
   }
 
   function closePicker() {
@@ -424,7 +535,7 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
     <ScrollView contentContainerStyle={styles.page} testID="showdown-screen">
       <TopBar title="Showdown" back={onBack ?? noopAction} />
 
-      <Text style={styles.kicker}>Weekly Challenge</Text>
+      {!isVotingMode ? <Text style={styles.kicker}>Weekly Challenge</Text> : null}
 
       {isLoading ? (
         <View style={styles.stateCard}>
@@ -449,7 +560,7 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
         </View>
       ) : null}
 
-      {!isLoading && !errorMessage && overview && viewModel ? (
+      {!isLoading && !errorMessage && overview && viewModel && !isVotingMode ? (
         <ShowdownCompetitionCard
           title={overview.title}
           description={cleanDescription(overview.description)}
@@ -459,7 +570,10 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
           timingLine={viewModel.timingLine}
           nextLine={viewModel.nextLine}
           ctaLabel={viewModel.ctaLabel}
-          ctaDisabled={viewModel.ctaDisabled || viewModel.phase !== "submissions" || hasEntered}
+          ctaDisabled={
+            viewModel.ctaDisabled ||
+            (viewModel.phase === "submissions" ? !canEnterSubmissionFlow : viewModel.phase !== "voting")
+          }
           onPressCta={handlePressCta}
           entryCount={viewModel.showEntryCount ? overview.total_active_entries : null}
           hasEntered={hasEntered}
@@ -468,8 +582,74 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
         />
       ) : null}
 
+      {!isLoading && !errorMessage && overview && viewModel && isVotingMode ? (
+        <View testID="showdown-voting-view">
+          <View style={styles.votingHeaderCard}>
+            <Text style={styles.votingTitle}>Showdown Voting</Text>
+            <Text style={styles.votingSubtitle}>Tap the better cover. We&apos;ll bring up the next matchup automatically.</Text>
+          </View>
+
+          {isMatchupLoading && !matchup ? (
+            <View style={styles.stateCard}>
+              <ActivityIndicator size="small" color={RecordQuestTheme.colors.accent} />
+              <Text style={styles.stateTitle}>Loading matchup...</Text>
+              <Text style={styles.stateText}>Finding your next pair.</Text>
+            </View>
+          ) : null}
+
+          {!isMatchupLoading && votingErrorMessage && !matchup ? (
+            <View style={styles.stateCard}>
+              <Text style={styles.stateTitle}>Couldn&apos;t load matchup</Text>
+              <Text style={styles.stateText}>{votingErrorMessage}</Text>
+              <Pressable
+                style={({ pressed }) => [styles.retryButton, pressed ? styles.retryButtonPressed : null]}
+                onPress={() => {
+                  void loadNextMatchup();
+                }}
+              >
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {matchup ? (
+            <>
+              <ShowdownMatchupCard
+                matchup={matchup}
+                transitionKey={`${matchup.entry_a.id}:${matchup.entry_b.id}`}
+                selectedWinnerId={selectedWinnerId}
+                disabled={isVoteSubmitting}
+                onVoteLeft={() => {
+                  void handleVote(matchup.entry_a.id);
+                }}
+                onVoteRight={() => {
+                  void handleVote(matchup.entry_b.id);
+                }}
+              />
+
+              {isVoteSubmitting ? <Text style={styles.voteStatusText}>Submitting vote...</Text> : null}
+              {votingErrorMessage ? <Text style={styles.voteErrorText}>{votingErrorMessage}</Text> : null}
+            </>
+          ) : null}
+
+          {!isMatchupLoading && !votingErrorMessage && !matchup && hasLoadedFirstMatchup ? (
+            <View style={styles.stateCard} testID="showdown-empty-voting-state">
+              <Text style={styles.stateTitle}>You&apos;re all caught up</Text>
+              <Text style={styles.stateText}>You&apos;ve voted on every matchup available to you right now.</Text>
+              <Text style={styles.stateText}>Check back later as more records enter.</Text>
+              <Pressable
+                style={({ pressed }) => [styles.retryButton, pressed ? styles.retryButtonPressed : null]}
+                onPress={leaveVotingMode}
+              >
+                <Text style={styles.retryButtonText}>Back to Showdown</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
       <ShowdownRecordPickerModal
-        visible={isRecordPickerOpen}
+        visible={isRecordPickerOpen && !isVotingMode}
         records={records}
         isSubmitting={isSubmittingEntry}
         errorMessage={submissionErrorMessage}
@@ -521,6 +701,42 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     textAlign: "center",
+  },
+  votingHeaderCard: {
+    marginTop: 2,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "rgba(139, 92, 246, 0.32)",
+    borderRadius: 18,
+    backgroundColor: "rgba(139, 92, 246, 0.12)",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  votingTitle: {
+    color: RecordQuestTheme.colors.textPrimary,
+    fontSize: 18,
+    fontWeight: "900",
+    marginBottom: 4,
+  },
+  votingSubtitle: {
+    color: RecordQuestTheme.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  voteStatusText: {
+    color: RecordQuestTheme.colors.textSecondary,
+    fontSize: 13,
+    textAlign: "center",
+    marginTop: 10,
+    marginBottom: 2,
+    fontWeight: "600",
+  },
+  voteErrorText: {
+    color: "#FCA5A5",
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: "center",
+    marginTop: 10,
   },
   retryButton: {
     marginTop: 6,
