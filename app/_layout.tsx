@@ -6,6 +6,10 @@ import { AuthProvider, useAuth } from "../providers/AuthProvider";
 import { registerForPushNotificationsAsync } from "../hooks/push-notifications";
 import { upsertUserPushToken } from "../hooks/recordquest-supabase-service";
 import { isRecoveryAuthRoute } from "../utils/auth-route-guard";
+import {
+  parseShowdownNotificationIntent,
+  setPendingShowdownNotificationIntent,
+} from "../hooks/showdown-notification-intent";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -29,6 +33,36 @@ function RootNavigator() {
   const pathname = usePathname();
   const pushRegistrationUserIdRef = useRef<string | null>(null);
   const pushRegistrationInFlightUserIdRef = useRef<string | null>(null);
+  const lastHandledNotificationIdRef = useRef<string | null>(null);
+
+  const handleNotificationResponse = useRef(
+    (response: Notifications.NotificationResponse | null) => {
+      if (!response) {
+        return;
+      }
+
+      if (response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) {
+        return;
+      }
+
+      const notificationId = response.notification.request.identifier;
+      if (lastHandledNotificationIdRef.current === notificationId) {
+        return;
+      }
+
+      const intent = parseShowdownNotificationIntent(response.notification.request.content.data);
+      if (!intent) {
+        return;
+      }
+
+      lastHandledNotificationIdRef.current = notificationId;
+      setPendingShowdownNotificationIntent(intent);
+      router.replace("/(tabs)");
+      void Notifications.clearLastNotificationResponseAsync().catch(() => {
+        // Best effort; a failure here should not block navigation.
+      });
+    }
+  ).current;
 
   useEffect(() => {
     if (isRecoveryAuthRoute(pathname)) {
@@ -102,6 +136,34 @@ function RootNavigator() {
       isMounted = false;
     };
   }, [user?.id]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    void Notifications.getLastNotificationResponseAsync()
+      .then((response) => {
+        if (!isMounted) {
+          return;
+        }
+
+        handleNotificationResponse(response);
+      })
+      .catch((error) => {
+        console.warn(
+          "[RecordQuest][push] failed to read last notification response:",
+          error instanceof Error ? error.message : "unknown error"
+        );
+      });
+
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      handleNotificationResponse(response);
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.remove();
+    };
+  }, [handleNotificationResponse]);
 
   if (isLoading || (user?.id && profileSetupStatus === "loading")) {
     return (

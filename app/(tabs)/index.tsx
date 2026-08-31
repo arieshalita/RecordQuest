@@ -60,6 +60,10 @@ import type { SocialConnectionsMode, SocialConnectionUser } from "../../hooks/so
 import { getCurrentCompetition } from "../../hooks/showdown-service";
 import type { ShowdownOverview, ShowdownServiceError } from "../../hooks/showdown-types";
 import {
+  consumePendingShowdownNotificationIntent,
+  subscribeToShowdownNotificationIntent,
+} from "../../hooks/showdown-notification-intent";
+import {
   loadUserAchievementEarnedAt,
   persistAchievementEarnedAt,
 } from "../../hooks/recordquest-supabase-service";
@@ -286,6 +290,7 @@ export default function App() {
   const [currentShowdownOverview, setCurrentShowdownOverview] = useState<ShowdownOverview | null>(null);
   const [isShowdownHomeLoading, setIsShowdownHomeLoading] = useState(false);
   const [showdownHomeError, setShowdownHomeError] = useState<string | null>(null);
+  const [activeShowdownCompetitionId, setActiveShowdownCompetitionId] = useState<string | null>(null);
   const [selectedProfileUserId, setSelectedProfileUserId] = useState<string | null>(null);
   const [selectedProfileDisplayName, setSelectedProfileDisplayName] = useState<string | null>(null);
   const [profileBackScreen, setProfileBackScreen] = useState<"Home" | "DiscoverUsers" | "SocialList">("Home");
@@ -426,6 +431,7 @@ export default function App() {
     setCurrentShowdownOverview(null);
     setShowdownHomeError(null);
     setIsShowdownHomeLoading(false);
+    setActiveShowdownCompetitionId(null);
     setDiscoverUsers([]);
     setDiscoverUsersError(null);
     setIsDiscoverUsersLoading(false);
@@ -997,12 +1003,39 @@ export default function App() {
   }, []);
 
   const openShowdown = useCallback(() => {
-    if (!currentShowdownOverview?.competition_id) {
+    const competitionId = currentShowdownOverview?.competition_id?.trim();
+    if (!competitionId) {
       return;
     }
 
+    setActiveShowdownCompetitionId(competitionId);
     setScreen("Showdown");
   }, [currentShowdownOverview?.competition_id]);
+
+  useEffect(() => {
+    function handleIntentCompetition(competitionId: string): void {
+      const scopedCompetitionId = competitionId.trim();
+      if (!scopedCompetitionId) {
+        return;
+      }
+
+      setActiveShowdownCompetitionId(scopedCompetitionId);
+      setScreen("Showdown");
+    }
+
+    const pendingIntent = consumePendingShowdownNotificationIntent();
+    if (pendingIntent?.competitionId) {
+      handleIntentCompetition(pendingIntent.competitionId);
+    }
+
+    const unsubscribe = subscribeToShowdownNotificationIntent((intent) => {
+      handleIntentCompetition(intent.competitionId);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   const loadFollowingFeed = useCallback(
     async (forceRefresh = false) => {
@@ -2017,15 +2050,17 @@ export default function App() {
         />
       )}
 
-      {screen === "Showdown" && currentShowdownOverview ? (
+      {screen === "Showdown" && activeShowdownCompetitionId ? (
         <ShowdownScreen
-          competitionId={currentShowdownOverview.competition_id}
+          competitionId={activeShowdownCompetitionId}
           records={records}
-          onBack={() => setScreen("Home")}
+          onBack={() => {
+            setScreen("Home");
+          }}
         />
       ) : null}
 
-      {screen === "Showdown" && !currentShowdownOverview ? (
+      {screen === "Showdown" && !activeShowdownCompetitionId ? (
         <View style={styles.cloudLoadingContainer}>
           <Text style={styles.cloudLoadingText}>Showdown is unavailable right now.</Text>
           <Pressable
