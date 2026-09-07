@@ -1194,6 +1194,229 @@ async function runQa() {
       "Vote counters inconsistent with vote history"
     );
 
+    const duplicateCompetition = await createTemplate(adminClient, state, 3);
+    tracker.pass("Created duplicate-album guard QA competition");
+
+    const duplicateCompetitionId = duplicateCompetition.id;
+
+    const duplicateRecordIdC = Number(`${Date.now()}`) * 100 + 50;
+    const duplicateRecordInsertC = await userMap.C.client.from("records").insert({
+      id: duplicateRecordIdC,
+      user_id: userMap.C.userId,
+      album: "  qa album b ",
+      artist: "QA ARTIST B  ",
+      year: "2001",
+      genre: "QA",
+      cover: `https://qa.example.com/${state.runId}/C-duplicate.jpg`,
+      purchasedAt: "",
+      purchaseDate: "",
+      condition: "",
+      price: "",
+      notes: `Showdown QA duplicate album run ${state.runId}`,
+      favoriteTrack: "",
+      rating: 5,
+    });
+
+    if (duplicateRecordInsertC.error) {
+      throw new Error(
+        `Failed to create duplicate QA record for user C: ${sanitizeError(duplicateRecordInsertC.error).message}`
+      );
+    }
+
+    state.records.push({ id: duplicateRecordIdC, userId: userMap.C.userId, label: "C-duplicate" });
+    await saveState(state);
+    tracker.pass("Created duplicate-normalized source record for user C");
+
+    const submitDuplicateCompetitionUser = async (label, sourceRecordId) => {
+      const user = userMap[label];
+      const recordId = sourceRecordId ?? user.recordId;
+      const { data, error } = await user.client.rpc("submit_competition_entry", {
+        p_competition_id: duplicateCompetitionId,
+        p_source_record_id: recordId,
+        p_caption: null,
+      });
+
+      if (error || !data) {
+        throw new Error(
+          `submit_competition_entry failed for ${label} in duplicate competition: ${sanitizeError(error).message}`
+        );
+      }
+
+      user.entryIdByCompetition[duplicateCompetitionId] = data.id;
+      state.entriesByCompetition[duplicateCompetitionId].push(data.id);
+      await saveState(state);
+      tracker.pass(`User ${label} submitted to duplicate-album competition`);
+    };
+
+    await submitDuplicateCompetitionUser("A");
+    await submitDuplicateCompetitionUser("B");
+    await submitDuplicateCompetitionUser("C", duplicateRecordIdC);
+    await submitDuplicateCompetitionUser("D");
+
+    const duplicateEntries = await fetchActiveEntries(adminClient, duplicateCompetitionId);
+    assertCondition(
+      tracker,
+      duplicateEntries.length === 4,
+      "Duplicate-album competition has four active entries",
+      `Expected 4 active entries in duplicate competition, found ${duplicateEntries.length}`
+    );
+
+    const entryB = duplicateEntries.find((row) => row.user_id === userMap.B.userId);
+    const entryC = duplicateEntries.find((row) => row.user_id === userMap.C.userId);
+
+    if (!entryB || !entryC) {
+      throw new Error("Duplicate competition is missing required user B/C entries for guard validation.");
+    }
+
+    const duplicateAlbumAllowed =
+      Boolean(entryB) &&
+      Boolean(entryC) &&
+      entryB.album_title.trim().toLowerCase() === entryC.album_title.trim().toLowerCase() &&
+      entryB.artist_name.trim().toLowerCase() === entryC.artist_name.trim().toLowerCase();
+
+    assertCondition(
+      tracker,
+      duplicateAlbumAllowed,
+      "Different users can submit the same normalized album+artist",
+      "Failed to persist duplicate-normalized album+artist entries for different users"
+    );
+
+    await updateCompetitionWindow(adminClient, duplicateCompetitionId, buildVotingOpenWindow());
+    tracker.pass("Moved duplicate-album competition into voting phase");
+
+    const duplicatePairKey = entryB && entryC ? normalizePair(entryB.id, entryC.id) : null;
+    let duplicatePairServed = false;
+    let duplicateCompetitionValidVoteCount = 0;
+
+    for (let i = 0; i < 8; i += 1) {
+      const matchup = await userMap.A.client.rpc("get_next_competition_matchup", {
+        p_competition_id: duplicateCompetitionId,
+      });
+
+      if (matchup.error) {
+        tracker.fail("Duplicate-album competition matchup fetch failed");
+        printRpcFailureDebug({
+          rpcName: "get_next_competition_matchup",
+          expected: "successful matchup/zero-row",
+          error: matchup.error,
+          userLabel: "A",
+          competitionId: duplicateCompetitionId,
+        });
+        break;
+      }
+
+      if (!Array.isArray(matchup.data) || matchup.data.length === 0) {
+        break;
+      }
+
+      const row = matchup.data[0];
+      const pairKey = normalizePair(row.entry_a_id, row.entry_b_id);
+
+      if (duplicatePairKey && pairKey === duplicatePairKey) {
+        duplicatePairServed = true;
+        break;
+      }
+
+      const vote = await userMap.A.client.rpc("submit_competition_vote", {
+        p_competition_id: duplicateCompetitionId,
+        p_entry_a_id: row.entry_a_id,
+        p_entry_b_id: row.entry_b_id,
+        p_winner_entry_id: row.entry_a_id,
+      });
+
+      if (vote.error) {
+        tracker.fail("Duplicate-album competition valid vote failed");
+        printRpcFailureDebug({
+          rpcName: "submit_competition_vote",
+          expected: "successful vote on non-duplicate matchup",
+          error: vote.error,
+          userLabel: "A",
+          competitionId: duplicateCompetitionId,
+          entryIds: [row.entry_a_id, row.entry_b_id],
+        });
+        break;
+      }
+
+      duplicateCompetitionValidVoteCount += 1;
+    }
+
+    assertCondition(
+      tracker,
+      !duplicatePairServed,
+      "Matchmaking never returns duplicate-normalized album+artist pair",
+      "Matchmaking returned duplicate-normalized album+artist entries against each other"
+    );
+
+    assertCondition(
+      tracker,
+      duplicateCompetitionValidVoteCount > 0,
+      "Normal different-album matchmaking and voting still works",
+      "No successful non-duplicate votes occurred in duplicate-album competition"
+    );
+
+    const votesBeforeDuplicateRejection = await fetchVotes(adminClient, duplicateCompetitionId);
+    const scoresBeforeDuplicateRejection = await fetchScores(adminClient, duplicateCompetitionId);
+    const entryBScoreBefore = entryB
+      ? scoresBeforeDuplicateRejection.find((row) => row.entry_id === entryB.id)
+      : null;
+    const entryCScoreBefore = entryC
+      ? scoresBeforeDuplicateRejection.find((row) => row.entry_id === entryC.id)
+      : null;
+
+    await rpcExpectFailure({
+      tracker,
+      client: userMap.A.client,
+      rpcName: "submit_competition_vote",
+      params: {
+        p_competition_id: duplicateCompetitionId,
+        p_entry_a_id: entryB.id,
+        p_entry_b_id: entryC.id,
+        p_winner_entry_id: entryB.id,
+      },
+      expectedLabel: "Direct duplicate-album vote rejected",
+      expectedMessageIncludes: "identical albums cannot be matched against each other",
+      userLabel: "A",
+      competitionId: duplicateCompetitionId,
+      entryIds: [entryB.id, entryC.id],
+    });
+
+    const votesAfterDuplicateRejection = await fetchVotes(adminClient, duplicateCompetitionId);
+    const scoresAfterDuplicateRejection = await fetchScores(adminClient, duplicateCompetitionId);
+    const entryBScoreAfter = entryB
+      ? scoresAfterDuplicateRejection.find((row) => row.entry_id === entryB.id)
+      : null;
+    const entryCScoreAfter = entryC
+      ? scoresAfterDuplicateRejection.find((row) => row.entry_id === entryC.id)
+      : null;
+
+    assertCondition(
+      tracker,
+      votesAfterDuplicateRejection.length === votesBeforeDuplicateRejection.length,
+      "Rejected duplicate-album vote inserted no vote row",
+      "Rejected duplicate-album vote unexpectedly inserted a vote row"
+    );
+
+    const duplicateScoresUnchanged =
+      Boolean(entryBScoreBefore) &&
+      Boolean(entryCScoreBefore) &&
+      Boolean(entryBScoreAfter) &&
+      Boolean(entryCScoreAfter) &&
+      Number(entryBScoreBefore.rating) === Number(entryBScoreAfter.rating) &&
+      Number(entryBScoreBefore.wins) === Number(entryBScoreAfter.wins) &&
+      Number(entryBScoreBefore.losses) === Number(entryBScoreAfter.losses) &&
+      Number(entryBScoreBefore.appearances) === Number(entryBScoreAfter.appearances) &&
+      Number(entryCScoreBefore.rating) === Number(entryCScoreAfter.rating) &&
+      Number(entryCScoreBefore.wins) === Number(entryCScoreAfter.wins) &&
+      Number(entryCScoreBefore.losses) === Number(entryCScoreAfter.losses) &&
+      Number(entryCScoreBefore.appearances) === Number(entryCScoreAfter.appearances);
+
+    assertCondition(
+      tracker,
+      duplicateScoresUnchanged,
+      "Rejected duplicate-album vote changed no score counters/ratings",
+      "Rejected duplicate-album vote unexpectedly changed score counters/ratings"
+    );
+
     const exhaustionUser = userMap.D;
     const seenPairs = new Set();
     let exhausted = false;
