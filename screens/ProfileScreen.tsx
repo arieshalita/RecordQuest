@@ -51,6 +51,7 @@ type ProfileScreenProps = {
   onOpenDiscoverUsers?: () => void;
   onOpenSocialConnections?: (mode: "followers" | "following", userId: string, displayName: string) => void;
   onOpenProfileRecords?: (userId: string, displayName: string) => void;
+  onOpenShowdownResults?: (competitionId: string) => void;
 };
 
 type ProfileIdentityStatus = "loading" | "ready" | "unavailable" | "error";
@@ -298,6 +299,7 @@ export function ProfileScreen({
   onOpenDiscoverUsers,
   onOpenSocialConnections,
   onOpenProfileRecords,
+  onOpenShowdownResults,
 }: ProfileScreenProps) {
   const { signOut, deleteAccount, user, isLoading: isAuthLoading } = useAuth();
   const currentUserId = user?.id ?? null;
@@ -1242,7 +1244,11 @@ export function ProfileScreen({
             />
           </View>
 
-          <ProfileTrophySection userId={targetUserId ?? null} isOwnProfile={true} />
+          <ProfileTrophySection
+            userId={targetUserId ?? null}
+            isOwnProfile={true}
+            onOpenShowdownResults={onOpenShowdownResults}
+          />
 
           <View style={styles.achievementSummaryCard}>
             <View style={styles.achievementSummaryHeader}>
@@ -1424,7 +1430,11 @@ export function ProfileScreen({
           ) : null}
 
           {!isBlockedProfile ? (
-            <ProfileTrophySection userId={targetUserId ?? null} isOwnProfile={false} />
+            <ProfileTrophySection
+              userId={targetUserId ?? null}
+              isOwnProfile={false}
+              onOpenShowdownResults={onOpenShowdownResults}
+            />
           ) : null}
 
           {!isBlockedProfile ? <Text style={styles.sectionTitle}>Public Collection Preview</Text> : null}

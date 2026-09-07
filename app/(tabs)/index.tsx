@@ -1012,6 +1012,16 @@ export default function App() {
     setScreen("Showdown");
   }, [currentShowdownOverview?.competition_id]);
 
+  const openShowdownByCompetitionId = useCallback((competitionId: string) => {
+    const scopedCompetitionId = competitionId.trim();
+    if (!scopedCompetitionId) {
+      return;
+    }
+
+    setActiveShowdownCompetitionId(scopedCompetitionId);
+    setScreen("Showdown");
+  }, []);
+
   useEffect(() => {
     function handleIntentCompetition(competitionId: string): void {
       const scopedCompetitionId = competitionId.trim();
@@ -2112,6 +2122,7 @@ export default function App() {
             setDiscoverSearchText("");
             setScreen("DiscoverUsers");
           }}
+          onOpenShowdownResults={openShowdownByCompetitionId}
           onOpenSocialConnections={(mode, viewedUserId, viewedDisplayName) => {
             const trimmedViewedUserId = viewedUserId.trim();
 

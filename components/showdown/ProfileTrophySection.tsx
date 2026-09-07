@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { AlbumArt } from "../AlbumArt";
 import { RecordQuestTheme } from "../../constants/theme";
 import { getUserCompetitionAwards } from "../../hooks/showdown-service";
@@ -8,6 +8,7 @@ import type { ShowdownServiceError, ShowdownTrophyRow } from "../../hooks/showdo
 type ProfileTrophySectionProps = {
   userId: string | null;
   isOwnProfile: boolean;
+  onOpenShowdownResults?: (competitionId: string) => void;
 };
 
 function toTrophyErrorMessage(error: unknown): string {
@@ -45,15 +46,20 @@ function toPlacementLabel(placement: number | null): string {
   return `Placed #${placement}`;
 }
 
-export function ProfileTrophySection({ userId, isOwnProfile }: ProfileTrophySectionProps) {
+export function ProfileTrophySection({ userId, isOwnProfile, onOpenShowdownResults }: ProfileTrophySectionProps) {
   const [trophies, setTrophies] = useState<ShowdownTrophyRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [selectedTrophy, setSelectedTrophy] = useState<ShowdownTrophyRow | null>(null);
   const requestIdRef = useRef(0);
   const activeUserIdRef = useRef<string | null>(userId);
 
   useEffect(() => {
     activeUserIdRef.current = userId;
+  }, [userId]);
+
+  useEffect(() => {
+    setSelectedTrophy(null);
   }, [userId]);
 
   const loadTrophies = useCallback(async () => {
@@ -154,11 +160,15 @@ export function ProfileTrophySection({ userId, isOwnProfile }: ProfileTrophySect
           contentContainerStyle={styles.row}
         >
           {visibleTrophies.map((trophy) => (
-            <View
+            <Pressable
               key={trophy.award_id}
               testID={`showdown-trophy-card-${trophy.award_id}`}
               style={styles.card}
               accessible
+              accessibilityRole="button"
+              onPress={() => {
+                setSelectedTrophy(trophy);
+              }}
               accessibilityLabel={`Showdown trophy. ${trophy.competition_title}. ${toPlacementLabel(trophy.placement)} with ${trophy.album_title} by ${trophy.artist_name}.`}
             >
               <AlbumArt
@@ -184,10 +194,84 @@ export function ProfileTrophySection({ userId, isOwnProfile }: ProfileTrophySect
               <Text style={styles.cardDate} numberOfLines={1}>
                 {formatTrophyDate(trophy.awarded_at)}
               </Text>
-            </View>
+            </Pressable>
           ))}
         </ScrollView>
       ) : null}
+
+      <Modal
+        transparent
+        visible={selectedTrophy !== null}
+        animationType="fade"
+        presentationStyle="overFullScreen"
+        onRequestClose={() => {
+          setSelectedTrophy(null);
+        }}
+      >
+        <Pressable
+          style={styles.detailModalOverlay}
+          onPress={() => {
+            setSelectedTrophy(null);
+          }}
+        >
+          <Pressable style={styles.detailModalSheet} onPress={() => {}} testID="showdown-trophy-detail-modal">
+            <View style={styles.detailModalHandle} />
+
+            {selectedTrophy ? (
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.detailModalScrollContent}>
+                <AlbumArt
+                  uri={selectedTrophy.cover_url}
+                  style={styles.detailCover}
+                  debugScreen="other"
+                  debugAlbum={selectedTrophy.album_title}
+                  debugArtist={selectedTrophy.artist_name}
+                  debugUriSource="supabase"
+                />
+
+                <Text style={styles.detailPlacement}>{toPlacementLabel(selectedTrophy.placement)}</Text>
+                <Text style={styles.detailCompetition} numberOfLines={2}>
+                  {selectedTrophy.competition_title}
+                </Text>
+                <Text style={styles.detailAlbum} numberOfLines={2}>
+                  {selectedTrophy.album_title}
+                </Text>
+                <Text style={styles.detailArtist} numberOfLines={1}>
+                  {selectedTrophy.artist_name}
+                </Text>
+                <Text style={styles.detailDate}>{formatTrophyDate(selectedTrophy.awarded_at)}</Text>
+
+                {selectedTrophy.competition_id && typeof onOpenShowdownResults === "function" ? (
+                  <Pressable
+                    testID="showdown-trophy-detail-view-results"
+                    style={({ pressed }) => [styles.detailPrimaryButton, pressed ? styles.detailPrimaryButtonPressed : null]}
+                    onPress={() => {
+                      const competitionId = selectedTrophy.competition_id.trim();
+                      setSelectedTrophy(null);
+                      if (competitionId) {
+                        onOpenShowdownResults(competitionId);
+                      }
+                    }}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.detailPrimaryButtonText}>View Showdown Results</Text>
+                  </Pressable>
+                ) : null}
+
+                <Pressable
+                  testID="showdown-trophy-detail-close"
+                  style={({ pressed }) => [styles.detailSecondaryButton, pressed ? styles.detailSecondaryButtonPressed : null]}
+                  onPress={() => {
+                    setSelectedTrophy(null);
+                  }}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.detailSecondaryButtonText}>Close</Text>
+                </Pressable>
+              </ScrollView>
+            ) : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -253,50 +337,154 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   row: {
-    paddingRight: 8,
-    gap: 10,
+    paddingRight: 20,
+    gap: 8,
   },
   card: {
-    width: 190,
-    borderRadius: 16,
+    width: 144,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: "rgba(139, 92, 246, 0.36)",
     backgroundColor: "rgba(17, 19, 26, 0.95)",
-    padding: 11,
+    padding: 8,
+    minHeight: 206,
   },
   cover: {
     width: "100%",
     aspectRatio: 1,
-    borderRadius: 11,
-    marginBottom: 10,
+    borderRadius: 12,
+    marginBottom: 8,
   },
   cardKicker: {
     color: "#FDE68A",
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "900",
-    marginBottom: 4,
+    marginBottom: 3,
   },
   cardTitle: {
     color: RecordQuestTheme.colors.textPrimary,
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: "800",
-    lineHeight: 18,
-    marginBottom: 6,
+    lineHeight: 16,
+    marginBottom: 4,
   },
   cardAlbum: {
     color: RecordQuestTheme.colors.textSecondary,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
-    lineHeight: 17,
+    lineHeight: 15,
   },
   cardArtist: {
     color: RecordQuestTheme.colors.textMuted,
-    fontSize: 12,
-    marginTop: 2,
+    fontSize: 11,
+    marginTop: 1,
   },
   cardDate: {
     color: RecordQuestTheme.colors.textMuted,
-    fontSize: 11,
+    fontSize: 10,
+    marginTop: 6,
+  },
+  detailModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(4, 5, 9, 0.72)",
+    justifyContent: "flex-end",
+  },
+  detailModalSheet: {
+    backgroundColor: RecordQuestTheme.colors.bg,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    borderWidth: 1,
+    borderColor: RecordQuestTheme.colors.border,
+    borderBottomWidth: 0,
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 18,
+    maxHeight: "90%",
+  },
+  detailModalHandle: {
+    width: 42,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(246, 238, 220, 0.32)",
+    alignSelf: "center",
+    marginBottom: 14,
+  },
+  detailModalScrollContent: {
+    paddingBottom: 4,
+  },
+  detailCover: {
+    width: "100%",
+    aspectRatio: 1,
+    borderRadius: 18,
+    marginBottom: 14,
+  },
+  detailPlacement: {
+    color: "#FDE68A",
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+    marginBottom: 6,
+  },
+  detailCompetition: {
+    color: RecordQuestTheme.colors.textSecondary,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+    marginBottom: 6,
+  },
+  detailAlbum: {
+    color: RecordQuestTheme.colors.textPrimary,
+    fontSize: 22,
+    fontWeight: "900",
+    lineHeight: 28,
+    marginBottom: 3,
+  },
+  detailArtist: {
+    color: RecordQuestTheme.colors.textSecondary,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  detailDate: {
+    color: RecordQuestTheme.colors.textMuted,
+    fontSize: 12,
     marginTop: 8,
+    marginBottom: 16,
+  },
+  detailPrimaryButton: {
+    minHeight: 48,
+    borderRadius: RecordQuestTheme.radius.pill,
+    borderWidth: 1,
+    borderColor: RecordQuestTheme.colors.borderStrong,
+    backgroundColor: RecordQuestTheme.colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+  detailPrimaryButtonPressed: {
+    transform: [{ scale: 0.99 }],
+  },
+  detailPrimaryButtonText: {
+    color: "#FFF4D6",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  detailSecondaryButton: {
+    minHeight: 46,
+    borderRadius: RecordQuestTheme.radius.pill,
+    borderWidth: 1,
+    borderColor: RecordQuestTheme.colors.border,
+    backgroundColor: RecordQuestTheme.colors.bgElevated,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 10,
+  },
+  detailSecondaryButtonPressed: {
+    opacity: 0.9,
+  },
+  detailSecondaryButtonText: {
+    color: RecordQuestTheme.colors.textPrimary,
+    fontSize: 14,
+    fontWeight: "800",
   },
 });

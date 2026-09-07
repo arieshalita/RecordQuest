@@ -56,6 +56,11 @@ export function ShowdownResultsList({
   onBackToShowdown,
   transitionKey,
 }: ShowdownResultsListProps) {
+  const [reduceMotionEnabled, setReduceMotionEnabled] = React.useState(false);
+  const winnerOpacity = React.useRef(new Animated.Value(1)).current;
+  const winnerScale = React.useRef(new Animated.Value(1)).current;
+  const listOpacity = React.useRef(new Animated.Value(1)).current;
+  const listTranslateY = React.useRef(new Animated.Value(0)).current;
   const winner = results[0];
   const remaining = results.slice(1);
 
@@ -76,12 +81,6 @@ export function ShowdownResultsList({
       </View>
     );
   }
-
-  const [reduceMotionEnabled, setReduceMotionEnabled] = React.useState(false);
-  const winnerOpacity = React.useRef(new Animated.Value(1)).current;
-  const winnerScale = React.useRef(new Animated.Value(1)).current;
-  const listOpacity = React.useRef(new Animated.Value(1)).current;
-  const listTranslateY = React.useRef(new Animated.Value(0)).current;
 
   React.useEffect(() => {
     let isMounted = true;

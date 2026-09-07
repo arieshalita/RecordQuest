@@ -213,7 +213,7 @@ function buildShowdownViewModel(
       statusLine: hasEntered ? "You're entered." : "Pick one record and join this round.",
       timingLine,
       nextLine: hasEntered ? "Next: voting opens after entries close." : "Next: voting opens after entries close.",
-      ctaLabel: hasEntered ? "You're Entered" : "Enter a Record",
+      ctaLabel: hasEntered ? "Entered" : "Enter a Record",
       ctaDisabled: hasEntered,
       showEntryCount: true,
     };
@@ -710,8 +710,8 @@ export function ShowdownScreen({ competitionId, records, onBack }: ShowdownScree
           {!isMatchupLoading && !votingErrorMessage && !matchup && hasLoadedFirstMatchup ? (
             <View style={styles.stateCard} testID="showdown-empty-voting-state">
               <Text style={styles.stateTitle}>You&apos;re all caught up</Text>
-              <Text style={styles.stateText}>You&apos;ve voted on every matchup available to you right now.</Text>
-              <Text style={styles.stateText}>Check back later as more records enter.</Text>
+              <Text style={styles.stateText}>You&apos;ve voted on every matchup available to you.</Text>
+              <Text style={styles.stateText}>Check back later for the final results.</Text>
               <Pressable
                 style={({ pressed }) => [styles.retryButton, pressed ? styles.retryButtonPressed : null]}
                 onPress={leaveVotingMode}

@@ -3,6 +3,7 @@ import {
   AccessibilityInfo,
   Animated,
   Easing,
+  LayoutChangeEvent,
   Pressable,
   StyleSheet,
   Text,
@@ -47,12 +48,14 @@ function VoteOption({
   selectedWinnerId,
   disabled = false,
   onVote,
+  onCoverLayout,
 }: {
   entry: ShowdownMatchupEntry;
   side: "left" | "right";
   selectedWinnerId?: string | null;
   disabled?: boolean;
   onVote: () => void;
+  onCoverLayout?: (event: LayoutChangeEvent) => void;
 }) {
   const optionStyle = getOptionStyle(entry, selectedWinnerId, disabled);
 
@@ -69,6 +72,7 @@ function VoteOption({
       <AlbumArt
         uri={entry.cover_url}
         style={styles.cover}
+        onLayout={onCoverLayout}
         debugScreen="other"
         debugAlbum={entry.album_title}
         debugArtist={entry.artist_name}
@@ -99,7 +103,10 @@ export function ShowdownMatchupCard({
   onVoteLeft,
   onVoteRight,
 }: ShowdownMatchupCardProps) {
+  const VS_SIZE = 28;
   const [reduceMotionEnabled, setReduceMotionEnabled] = React.useState(false);
+  const [leftCoverCenterY, setLeftCoverCenterY] = React.useState<number | null>(null);
+  const [rightCoverCenterY, setRightCoverCenterY] = React.useState<number | null>(null);
   const leftScale = React.useRef(new Animated.Value(1)).current;
   const rightScale = React.useRef(new Animated.Value(1)).current;
   const leftOpacity = React.useRef(new Animated.Value(1)).current;
@@ -230,6 +237,24 @@ export function ShowdownMatchupCard({
     selectedWinnerId,
   ]);
 
+  const vsTop = React.useMemo(() => {
+    if (leftCoverCenterY === null || rightCoverCenterY === null) {
+      return null;
+    }
+
+    return (leftCoverCenterY + rightCoverCenterY) / 2 - VS_SIZE / 2;
+  }, [VS_SIZE, leftCoverCenterY, rightCoverCenterY]);
+
+  const handleLeftCoverLayout = React.useCallback((event: LayoutChangeEvent) => {
+    const { y, height } = event.nativeEvent.layout;
+    setLeftCoverCenterY(y + height / 2);
+  }, []);
+
+  const handleRightCoverLayout = React.useCallback((event: LayoutChangeEvent) => {
+    const { y, height } = event.nativeEvent.layout;
+    setRightCoverCenterY(y + height / 2);
+  }, []);
+
   return (
     <Animated.View
       style={[
@@ -251,11 +276,14 @@ export function ShowdownMatchupCard({
             selectedWinnerId={selectedWinnerId}
             disabled={disabled}
             onVote={onVoteLeft}
+            onCoverLayout={handleLeftCoverLayout}
           />
         </Animated.View>
 
-        <View style={styles.vsWrap} pointerEvents="none">
-          <Text style={styles.vsText}>VS</Text>
+        <View style={styles.centerGutter} pointerEvents="none">
+          <View style={[styles.vsWrap, vsTop !== null ? { marginTop: vsTop } : null]}>
+            <Text style={styles.vsText}>VS</Text>
+          </View>
         </View>
 
         <Animated.View style={{ flex: 1, opacity: rightOpacity, transform: [{ scale: rightScale }] }}>
@@ -265,6 +293,7 @@ export function ShowdownMatchupCard({
             selectedWinnerId={selectedWinnerId}
             disabled={disabled}
             onVote={onVoteRight}
+            onCoverLayout={handleRightCoverLayout}
           />
         </Animated.View>
       </View>
@@ -279,9 +308,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: RecordQuestTheme.colors.border,
     backgroundColor: RecordQuestTheme.colors.bgCard,
-    paddingHorizontal: 14,
-    paddingTop: 16,
-    paddingBottom: 14,
+    paddingHorizontal: 12,
+    paddingTop: 14,
+    paddingBottom: 12,
     shadowColor: "#000",
     shadowOpacity: 0.2,
     shadowRadius: 14,
@@ -290,16 +319,17 @@ const styles = StyleSheet.create({
   },
   heading: {
     color: RecordQuestTheme.colors.textPrimary,
-    fontSize: 20,
+    fontSize: 19,
     fontWeight: "900",
     textAlign: "center",
-    marginBottom: 14,
+    marginBottom: 12,
   },
   optionsRow: {
     flexDirection: "row",
     alignItems: "stretch",
     justifyContent: "space-between",
-    gap: 10,
+    gap: 7,
+    position: "relative",
   },
   optionCard: {
     flex: 1,
@@ -307,8 +337,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: RecordQuestTheme.colors.border,
     backgroundColor: "rgba(16, 18, 26, 0.95)",
-    padding: 10,
-    minHeight: 220,
+    padding: 8,
   },
   optionCardSelected: {
     borderColor: RecordQuestTheme.colors.borderStrong,
@@ -327,44 +356,50 @@ const styles = StyleSheet.create({
     width: "100%",
     aspectRatio: 1,
     borderRadius: 12,
-    marginBottom: 10,
+    marginBottom: 8,
   },
   albumTitle: {
     color: RecordQuestTheme.colors.textPrimary,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "800",
-    lineHeight: 18,
-    minHeight: 36,
+    lineHeight: 16,
+    minHeight: 32,
   },
   artistName: {
     color: RecordQuestTheme.colors.textSecondary,
-    fontSize: 12,
-    marginTop: 3,
+    fontSize: 11,
+    marginTop: 2,
   },
   caption: {
     color: RecordQuestTheme.colors.textMuted,
-    fontSize: 11,
-    lineHeight: 15,
-    marginTop: 8,
+    fontSize: 10,
+    lineHeight: 14,
+    marginTop: 6,
+  },
+  centerGutter: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "flex-start",
+    zIndex: 2,
   },
   vsWrap: {
-    position: "absolute",
-    left: "50%",
-    top: "42%",
-    transform: [{ translateX: -16 }],
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(6, 7, 11, 0.86)",
+    backgroundColor: "rgba(10, 11, 16, 0.90)",
     borderWidth: 1,
-    borderColor: "rgba(246, 238, 220, 0.16)",
+    borderColor: "rgba(139, 92, 246, 0.26)",
   },
   vsText: {
-    color: RecordQuestTheme.colors.textMuted,
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.5,
+    color: "#E9D5FF",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 0.7,
   },
 });
